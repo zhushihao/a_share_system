@@ -19,8 +19,23 @@ from typing import List, Optional, Dict, Any
 
 from fastapi import APIRouter, Query
 import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
 
 router = APIRouter()
+
+# 轻量线程池（用于并发获取板块成分股数量）
+_sector_count_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="sector_count")
+
+# 板块成分股数量缓存：{sector_code: (count, cached_at)}
+_sector_count_cache: Dict[str, Any] = {}
+_SECTOR_COUNT_TTL = 300
+
+# 市场情绪 / 热点板块 fallback 缓存
+_sentiment_cache: Optional[Dict[str, Any]] = None
+_sentiment_cache_time: Optional[datetime] = None
+_hotspots_cache: Optional[List[Dict[str, Any]]] = None
+_hotspots_cache_time: Optional[datetime] = None
+_HOTSPOTS_CACHE_TTL = 300
 
 # 四大指数代码
 INDEX_CODES = {
@@ -70,13 +85,20 @@ def _fetch_index_quotes() -> List[Dict[str, Any]]:
 def _fetch_market_sentiment() -> Dict[str, Any]:
     """
     获取市场情绪数据（5分钟缓存）
-    数据来源：mootdx Quotes 实时接口（通过 DataPlatformService 缓存）
+    数据来源：优先 mootdx Quotes 实时接口，失败时降级到东方财富全市场快照 + 涨跌停统计。
     """
+    global _sentiment_cache, _sentiment_cache_time
+    now = datetime.now()
+    if _sentiment_cache is not None and _sentiment_cache_time is not None:
+        if (now - _sentiment_cache_time).total_seconds() < _HOTSPOTS_CACHE_TTL:
+            return _sentiment_cache
+
+    # 1. 优先 mootdx 全市场概览
     try:
         platform = _get_data_platform()
         overview = platform.get_market_overview()
         if overview is not None and overview.get("total_valid", 0) > 0:
-            return {
+            result = {
                 "up_down_ratio": overview.get("up_down_ratio"),
                 "limit_up": overview.get("limit_up"),
                 "limit_down": overview.get("limit_down"),
@@ -84,11 +106,48 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
                 "declining": overview.get("declining"),
                 "source": "mootdx",
             }
+            _sentiment_cache = result
+            _sentiment_cache_time = now
+            return result
     except Exception:
         pass
-    
-    # 降级：返回 unavailable
-    return {
+
+    # 2. 降级：东方财富全市场快照 + 涨跌停
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        from utils.data_fetcher import fetch_stock_list, fetch_limit_up_down
+
+        stock_df = fetch_stock_list()
+        advancing, declining = 0, 0
+        up_down_ratio = None
+        if stock_df is not None and len(stock_df) > 0:
+            advancing = int((stock_df["change_pct"] > 0).sum())
+            declining = int((stock_df["change_pct"] < 0).sum())
+            if declining > 0:
+                up_down_ratio = round(advancing / declining, 2)
+
+        limit_df = fetch_limit_up_down(datetime.now().strftime("%Y-%m-%d"))
+        limit_up, limit_down = 0, 0
+        if limit_df is not None and len(limit_df) > 0 and "limit_type" in limit_df.columns:
+            limit_up = int((limit_df["limit_type"] == "U").sum())
+            limit_down = int((limit_df["limit_type"] == "D").sum())
+
+        result = {
+            "up_down_ratio": up_down_ratio,
+            "limit_up": limit_up if limit_up > 0 else None,
+            "limit_down": limit_down if limit_down > 0 else None,
+            "advancing": advancing if advancing > 0 else None,
+            "declining": declining if declining > 0 else None,
+            "source": "eastmoney",
+        }
+        _sentiment_cache = result
+        _sentiment_cache_time = now
+        return result
+    except Exception:
+        pass
+
+    # 3. 彻底不可用
+    result = {
         "up_down_ratio": None,
         "limit_up": None,
         "limit_down": None,
@@ -96,18 +155,28 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
         "declining": None,
         "source": "unavailable",
     }
+    _sentiment_cache = result
+    _sentiment_cache_time = now
+    return result
 
 
 def _fetch_hotspots() -> List[Dict[str, Any]]:
     """
     获取热点板块 TOP10（5分钟缓存）
-    数据来源：mootdx Quotes 实时接口（通过 DataPlatformService 缓存）
+    数据来源：优先 mootdx Quotes 实时接口；失败时降级到东方财富板块涨幅榜。
     """
+    global _hotspots_cache, _hotspots_cache_time
+    now = datetime.now()
+    if _hotspots_cache is not None and _hotspots_cache_time is not None:
+        if (now - _hotspots_cache_time).total_seconds() < _HOTSPOTS_CACHE_TTL:
+            return _hotspots_cache
+
+    # 1. 优先 mootdx
     try:
         platform = _get_data_platform()
         hotspots = platform.get_hotspots()
         if hotspots:
-            return [
+            result = [
                 {
                     "block_code": "",
                     "block_name": h["block_name"],
@@ -121,9 +190,41 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
                 }
                 for i, h in enumerate(hotspots)
             ]
+            _hotspots_cache = result
+            _hotspots_cache_time = now
+            return result
     except Exception:
         pass
-    
+
+    # 2. 降级：东方财富板块涨幅榜
+    try:
+        network_sectors = _fetch_sector_list_from_network()
+        if network_sectors is not None and len(network_sectors) > 0:
+            df = network_sectors.sort_values("change_pct", ascending=False).head(10)
+            codes = df["sector_code"].astype(str).tolist()
+            count_map = _get_sector_component_counts(codes)
+            result = []
+            for i, (_, row) in enumerate(df.iterrows()):
+                code = str(row.get("sector_code", ""))
+                result.append({
+                    "block_code": code,
+                    "block_name": row.get("sector_name", ""),
+                    "change_pct": round(row.get("change_pct", 0), 2),
+                    "volume_ratio": 1.0,
+                    "money_flow": round(row.get("amount", 0), 2),
+                    "rank": i + 1,
+                    "stock_count": count_map.get(code, 0),
+                    "up_count": 0,
+                    "limit_up_count": 0,
+                })
+            _hotspots_cache = result
+            _hotspots_cache_time = now
+            return result
+    except Exception:
+        pass
+
+    _hotspots_cache = []
+    _hotspots_cache_time = now
     return []
 
 
@@ -296,6 +397,32 @@ def _fetch_sector_components_from_network(sector_code: str) -> Optional[pd.DataF
     return None
 
 
+def _get_sector_component_count(sector_code: str) -> int:
+    """获取板块成分股数量，带 5 分钟缓存"""
+    now = datetime.now()
+    cached = _sector_count_cache.get(sector_code)
+    if cached is not None:
+        count, cached_at = cached
+        if (now - cached_at).total_seconds() < _SECTOR_COUNT_TTL:
+            return count
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        from utils.data_fetcher import em_fetch_sector_component_count
+        count = em_fetch_sector_component_count(sector_code)
+    except Exception:
+        count = 0
+    _sector_count_cache[sector_code] = (count, now)
+    return count
+
+
+def _get_sector_component_counts(sector_codes: List[str]) -> Dict[str, int]:
+    """并发获取多个板块的成分股数量"""
+    if not sector_codes:
+        return {}
+    results = list(_sector_count_executor.map(_get_sector_component_count, sector_codes))
+    return {code: count for code, count in zip(sector_codes, results)}
+
+
 def _read_local_blocks() -> Dict[str, List[str]]:
     """读取本地通达信板块文件"""
     blocks = {}
@@ -328,15 +455,18 @@ async def market_sectors(
     # 1. 优先尝试网络获取
     network_sectors = _fetch_sector_list_from_network()
     if network_sectors is not None and len(network_sectors) > 0:
+        sector_codes = network_sectors["sector_code"].astype(str).tolist()
+        count_map = _get_sector_component_counts(sector_codes)
         sectors = []
         for _, row in network_sectors.iterrows():
+            code = str(row.get("sector_code", ""))
             sectors.append({
-                "code": row.get("sector_code", ""),
+                "code": code,
                 "name": row.get("sector_name", ""),
                 "type": "industry",
                 "level": "一级",
                 "change_pct": round(row.get("change_pct", 0), 2),
-                "stock_count": 0,  # 成分股在 detail 接口获取
+                "stock_count": count_map.get(code, 0),
                 "stocks": [],
             })
         return {

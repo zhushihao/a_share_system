@@ -106,8 +106,10 @@ async def get_stock_list(
         if df is None or len(df) == 0:
             return {"status": "ok", "count": 0, "stocks": []}
 
-        # 筛选市场
-        if market and "code" in df.columns:
+        # 筛选市场：优先使用 provider 返回的 market 字段，避免把上海指数代码误判为深圳
+        if market and "market" in df.columns:
+            df = df[df["market"].astype(str).str.lower() == market.lower()]
+        elif market and "code" in df.columns:
             if market.lower() == "sh":
                 df = df[df["code"].astype(str).str.startswith("6")]
             elif market.lower() == "sz":
@@ -118,13 +120,15 @@ async def get_stock_list(
         # 按代码排序，避免截断时丢失特定股票（如 300308 中际旭创）
         df = df.sort_values(by="code").reset_index(drop=True).head(limit)
 
-        # 转换为标准格式
+        # 转换为标准格式，保留 provider 返回的市场字段
         records = []
         for _, row in df.iterrows():
+            raw_market = str(row.get("market", "")).lower().strip()
+            code = str(row.get("code", ""))
             records.append({
-                "code": str(row.get("code", "")),
+                "code": code,
                 "name": str(row.get("name", "")),
-                "market": _infer_market(str(row.get("code", ""))),
+                "market": raw_market if raw_market in ("sh", "sz", "bj") else _infer_market(code),
             })
 
         return {
@@ -162,27 +166,32 @@ async def search_stocks(
         q = q.strip().lower()
         if not q:
             return {"status": "ok", "count": 0, "stocks": []}
-        
+
         # 补齐6位代码用于匹配
         code_6 = q.zfill(6) if len(q) <= 6 else q
         matches = []
-        
+        seen_codes = set()
+
         for _, row in df.iterrows():
             row_code = str(row.get("code", "")).strip()
             row_name = str(row.get("name", "")).strip()
-            
+
             # 匹配条件：代码开头匹配 或 名称包含关键词
-            if (row_code.startswith(q) or row_code.startswith(code_6) or 
+            if (row_code.startswith(q) or row_code.startswith(code_6) or
                 q in row_name.lower()):
+                if row_code in seen_codes:
+                    continue
+                seen_codes.add(row_code)
+                row_market = str(row.get("market", "")).lower().strip()
                 matches.append({
                     "code": row_code,
                     "name": row_name,
-                    "market": _infer_market(row_code),
+                    "market": row_market if row_market in ("sh", "sz", "bj") else _infer_market(row_code),
                 })
-            
+
             if len(matches) >= limit:
                 break
-        
+
         return {
             "status": "ok",
             "count": len(matches),

@@ -413,6 +413,19 @@ def em_fetch_minute_kline(code: str, period: str = "5") -> pd.DataFrame:
     return df.sort_values("datetime").reset_index(drop=True)
 
 
+def _clean_em_text(text: str) -> str:
+    """清理东方财富接口返回的文本：强制 UTF-8 并处理 GBK 误解码产生的 surrogate"""
+    if not isinstance(text, str):
+        return str(text)
+    # 若包含 surrogate pair，说明被错误解码，尝试按 latin1→gbk 重新解码
+    if any(0xDC00 <= ord(c) <= 0xDFFF for c in text):
+        try:
+            return text.encode("latin1", "replace").decode("gbk", "ignore")
+        except Exception:
+            pass
+    return text
+
+
 def em_fetch_sector_list() -> pd.DataFrame:
     """同花顺概念板块列表（带异常降级）"""
     try:
@@ -423,6 +436,7 @@ def em_fetch_sector_list() -> pd.DataFrame:
             "&fields=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17,f18,f19,f20,f21,f22,f23,f24,f25,f26,f27,f28,f29,f30,f31,f32,f33,f34,f35,f36,f37,f38,f39,f40,f41,f42,f43,f44,f45,f46,f47,f48,f49,f50,f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65,f66,f67,f68,f69,f70,f71,f72,f73,f74,f75,f76,f77,f78,f79,f80,f81,f82,f83,f84,f85,f86,f87,f88,f89,f90,f91,f92,f93,f94,f95,f96,f97,f98,f99,f100"
         )
         r = _retry_get(url, max_retries=2, timeout=15)
+        r.encoding = "utf-8"
         data = r.json()
         if data.get("data") is None or data["data"].get("diff") is None:
             return pd.DataFrame()
@@ -431,7 +445,7 @@ def em_fetch_sector_list() -> pd.DataFrame:
         for item in raw:
             rows.append({
                 "sector_code": item.get("f12", ""),
-                "sector_name": item.get("f14", ""),
+                "sector_name": _clean_em_text(item.get("f14", "")),
                 "close": item.get("f2", 0) / 100 if item.get("f2") else 0,
                 "change_pct": item.get("f3", 0) / 100 if item.get("f3") else 0,
                 "volume": item.get("f5", 0),
@@ -525,6 +539,7 @@ def em_fetch_sector_components(sector_code: str) -> pd.DataFrame:
             f"&fields=f12,f13,f14,f2,f3,f20,f21"
         )
         r = _retry_get(url, max_retries=2, timeout=15)
+        r.encoding = "utf-8"
         data = r.json()
         if data.get("data") is None or data["data"].get("diff") is None:
             return pd.DataFrame()
@@ -542,6 +557,25 @@ def em_fetch_sector_components(sector_code: str) -> pd.DataFrame:
         return pd.DataFrame(rows)
     except Exception as e:
         return pd.DataFrame()
+
+def em_fetch_sector_component_count(sector_code: str) -> int:
+    """获取板块成分股数量（轻量接口，仅取 total）"""
+    try:
+        url = (
+            f"https://push2.eastmoney.com/api/qt/clist/get"
+            f"?pn=1&pz=1&po=1&np=1&fltt=2&invt=2&fid=f20"
+            f"&fs=b:{sector_code}"
+            f"&fields=f12"
+        )
+        r = _retry_get(url, max_retries=1, timeout=10)
+        r.encoding = "utf-8"
+        data = r.json()
+        if data.get("data") is None:
+            return 0
+        return int(data["data"].get("total", 0) or 0)
+    except Exception:
+        return 0
+
 
 
 def em_fetch_northbound_money(start_date: str, end_date: str) -> pd.DataFrame:
