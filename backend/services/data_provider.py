@@ -12,7 +12,7 @@ Data Provider Service - 行情数据服务层
 import sys
 import os
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import pandas as pd
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -60,6 +60,8 @@ class DataProviderService:
         self._obs = get_obs()
         self._cache = MultiLevelCache()
         self._valid_symbols: Optional[set] = None  # 本地有效股票代码缓存
+        self._stock_name_cache: Optional[Tuple[Dict[str, str], datetime]] = None
+        self._NAME_CACHE_TTL = 3600
         
     def _load_valid_symbols(self) -> set:
         """加载本地通达信有效股票代码列表（缓存）"""
@@ -80,6 +82,27 @@ class DataProviderService:
         """检查代码是否在本地有效股票列表中"""
         valid = self._load_valid_symbols()
         return code in valid
+
+    def _get_stock_name_map(self) -> Dict[str, str]:
+        """获取代码→名称映射（1小时缓存），优先本地通达信 stock-list，失败则空"""
+        now = datetime.now()
+        if self._stock_name_cache is not None:
+            name_map, cached_at = self._stock_name_cache
+            if (now - cached_at).total_seconds() < self._NAME_CACHE_TTL:
+                return name_map
+        name_map: Dict[str, str] = {}
+        try:
+            df = self.provider.fetch_stock_list()
+            if df is not None and len(df) > 0 and "code" in df.columns and "name" in df.columns:
+                for _, row in df.iterrows():
+                    code = str(row.get("code", "")).strip().zfill(6)
+                    name = str(row.get("name", "")).strip()
+                    if code and name:
+                        name_map[code] = name
+        except Exception as e:
+            self._obs.log("WARN", f"Failed to load stock name map: {e}", "DataProviderService")
+        self._stock_name_cache = (name_map, now)
+        return name_map
 
     def _fetch_kline_with_timeout(
         self,
@@ -629,6 +652,7 @@ class DataProviderService:
                 missing_codes = [c for c in valid_codes if c not in got_codes]
                 if missing_codes:
                     self._obs.log('INFO', f'Falling back to offline for {len(missing_codes)} codes: {missing_codes[:5]}...', 'DataProviderService')
+                    name_map = self._get_stock_name_map()
                     for code in missing_codes:
                         try:
                             df = self.fetch_ohlcv(code, period='daily', adjust='qfq')
@@ -636,7 +660,7 @@ class DataProviderService:
                                 latest = df.iloc[-1]
                                 quotes.append(StandardQuote(
                                     symbol=code,
-                                    name=None,
+                                    name=name_map.get(code),
                                     timestamp=datetime.now(),
                                     open=float(latest['open']),
                                     high=float(latest['high']),
@@ -671,11 +695,12 @@ class DataProviderService:
             code = str(row.get("code", row.get("symbol", ""))).strip()
             if not code:
                 return None
-            
-            # 提取 name
+
+            # 提取 name，若缺失则从全市场列表查映射
             name = str(row.get("name", "")).strip() or None
-            
-            # 提取价格（mootdx realtime 返回的字段名可能不同）
+            if not name:
+                name = self._get_stock_name_map().get(code.zfill(6))
+
             close = float(row.get("close", row.get("price", row.get("latest", 0))))
             if close <= 0:
                 # 尝试其他字段

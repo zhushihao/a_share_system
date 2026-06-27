@@ -75,7 +75,7 @@ function MarketSentiment({ data, loading }: { data: any; loading: boolean }) {
         <h3 className="font-semibold text-slate-700">市场情绪</h3>
         {data?.source && (
           <span className={`text-xs px-2 py-0.5 rounded-full ${data.source === 'eastmoney' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-            {data.source === 'eastmoney' ? '实时' : data.source === 'unavailable' ? '暂无数据' : data.source}
+            {data.source === 'eastmoney' ? '实时' : data.source === 'unavailable' ? '暂无数据（非交易时间）' : data.source}
           </span>
         )}
       </div>
@@ -143,7 +143,7 @@ function HotBlocks({ data, loading }: { data: any[]; loading: boolean }) {
           <Zap size={18} className="text-amber-500" />
           <h3 className="font-semibold text-slate-700">热点板块</h3>
         </div>
-        <div className="text-sm text-slate-400 py-8 text-center">暂无板块数据</div>
+        <div className="text-sm text-slate-400 py-8 text-center">暂无板块数据（非交易时间或数据源未连接）</div>
       </div>
     )
   }
