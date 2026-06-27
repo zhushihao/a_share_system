@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}信号列表 - A股动量趋势系统{% endblock %}
+
+{% block content %}
+<section class="card">
+    <div class="card-header">
+        <h2>
+            <span>📡</span>
+            信号列表
+        </h2>
+        <span class="subtitle">策略触发记录</span>
+    </div>
+    <div class="card-body">
+        {% if signals %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>类型</th>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>信号</th>
+                    <th>评分</th>
+                    <th>详情</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sig in signals %}
+                <tr>
+                    <td>{{ sig.time }}</td>
+                    <td>{{ sig.type }}</td>
+                    <td class="name-cell">{{ sig.code }}</td>
+                    <td>{{ sig.name }}</td>
+                    <td style="font-weight:600; color: {% if sig.signal == '买入' %}var(--up){% elif sig.signal == '卖出' %}var(--down){% else %}var(--flat){% endif %}">
+                        {{ sig.signal }}
+                    </td>
+                    <td>{{ sig.score }}</td>
+                    <td>{{ sig.detail }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div style="text-align:center; color: var(--text-light); padding: 40px;">
+            暂无信号记录
+        </div>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

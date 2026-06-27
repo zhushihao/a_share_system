@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}A股动量趋势系统 v5.0{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <header class="header">
+        <h1>
+            <span>📊</span>
+            A股动量趋势系统 v5.0
+        </h1>
+        <div class="status">
+            <span id="market-status" class="badge">{{ market_status }}</span>
+            <span id="current-time">{{ current_time }}</span>
+        </div>
+        <div class="refresh-bar">
+            <select id="refresh-interval" onchange="setRefreshInterval()">
+                <option value="0">不刷新</option>
+                <option value="10">10秒</option>
+                <option value="30" selected>30秒</option>
+                <option value="60">1分钟</option>
+                <option value="300">5分钟</option>
+            </select>
+            <button onclick="refreshData()">🔄 刷新</button>
+        </div>
+    </header>
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>A股动量趋势系统 v5.0 | 数据源自通达信离线数据 + 实时服务器</p>
+    </footer>
+
+    <script>
+        let refreshTimer = null;
+        let refreshInterval = 30; // 默认30秒
+
+        function setRefreshInterval() {
+            const select = document.getElementById('refresh-interval');
+            refreshInterval = parseInt(select.value);
+            
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+            
+            if (refreshInterval > 0) {
+                refreshTimer = setInterval(() => {
+                    location.reload();
+                }, refreshInterval * 1000);
+            }
+        }
+
+        function refreshData() {
+            location.reload();
+        }
+
+        // 页面加载时启动自动刷新
+        document.addEventListener('DOMContentLoaded', function() {
+            setRefreshInterval();
+        });
+
+        // 更新当前时间
+        function updateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleString('zh-CN', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+            const el = document.getElementById('current-time');
+            if (el) el.textContent = timeStr;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+    </script>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

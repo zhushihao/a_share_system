@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+
+{% block title %}实时看板 - A股动量趋势系统{% endblock %}
+
+{% block content %}
+<!-- 大盘指数 -->
+<section class="grid grid-3">
+    {% for idx in indices %}
+    <div class="card">
+        <div class="card-body index-card">
+            <div class="name">{{ idx.name }}</div>
+            <div class="price" style="color: {% if idx.status == 'up' %}var(--up){% elif idx.status == 'down' %}var(--down){% else %}var(--flat){% endif %}">
+                {{ idx.price }}
+            </div>
+            <div class="change {{ idx.status }}">
+                {% if idx.change_pct > 0 %}+{% endif %}{{ idx.change_pct }}%
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</section>
+
+<!-- 板块热点 + 系统健康 -->
+<section class="grid grid-2">
+    <!-- 板块热点 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <span>🔥</span>
+                板块热点 TOP10
+            </h2>
+            <span class="subtitle">按动量评分排序</span>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>排名</th>
+                        <th>板块</th>
+                        <th>涨幅</th>
+                        <th>动量</th>
+                        <th>龙头</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sector in sectors %}
+                    <tr>
+                        <td class="rank {% if loop.index <= 3 %}top3{% endif %}">{{ loop.index }}</td>
+                        <td class="name-cell">{{ sector.name }}</td>
+                        <td class="pct {% if sector.change_pct > 0 %}up{% elif sector.change_pct < 0 %}down{% endif %}">
+                            {% if sector.change_pct > 0 %}+{% endif %}{{ sector.change_pct }}%
+                        </td>
+                        <td class="bar-cell">
+                            <div class="bar">
+                                <div class="bar-fill {% if sector.change_pct > 0 %}up{% else %}down{% endif %}" style="width: {{ sector.momentum }}%"></div>
+                            </div>
+                        </td>
+                        <td class="name-cell">
+                            {{ sector.leader }}
+                            <span class="code">{{ sector.leader_code }}</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 系统控制 -->
+    <div class="card">
+        <div class="card-header">
+            <h2>
+                <span>⚡</span>
+                系统控制
+            </h2>
+            <span id="engine-status-badge" class="subtitle">检测中...</span>
+        </div>
+        <div class="card-body">
+            <div class="health-grid">
+                <div class="health-item">
+                    <div class="dot {% if health.offline_data %}ok{% else %}error{% endif %}"></div>
+                    <span class="label">离线数据</span>
+                    <span class="value">{% if health.offline_data %}正常{% else %}异常{% endif %}</span>
+                </div>
+                <div class="health-item">
+                    <div class="dot {% if health.realtime_data %}ok{% else %}warn{% endif %}"></div>
+                    <span class="label">实时服务器</span>
+                    <span class="value">{% if health.realtime_data %}正常{% else %}离线{% endif %}</span>
+                </div>
+                <div class="health-item">
+                    <div class="dot {% if health.tdxdir %}ok{% else %}warn{% endif %}"></div>
+                    <span class="label">数据目录</span>
+                    <span class="value">{% if health.tdxdir %}已连接{% else %}未配置{% endif %}</span>
+                </div>
+                <div class="health-item">
+                    <div class="dot {% if health.mootdx %}ok{% else %}error{% endif %}"></div>
+                    <span class="label">mootdx</span>
+                    <span class="value">{% if health.mootdx %}已安装{% else %}未安装{% endif %}</span>
+                </div>
+            </div>
+
+            <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);">
+
+            <div style="display: flex; gap: 10px; justify-content: center;">
+                <button id="btn-start" onclick="startEngine()" style="background: var(--success); color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">
+                    ▶ 启动事件引擎
+                </button>
+                <button id="btn-stop" onclick="stopEngine()" style="background: var(--danger); color: white; border: none; padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;">
+                    ⏹ 停止事件引擎
+                </button>
+            </div>
+            <p id="control-msg" style="text-align: center; margin-top: 8px; font-size: 12px; color: var(--text-light);"></p>
+
+            <hr style="margin: 16px 0; border: none; border-top: 1px solid var(--border);">
+
+            <h3 style="font-size: 14px; margin-bottom: 12px; color: var(--text-secondary);">今日事件</h3>
+            <div class="event-list">
+                {% for evt in next_events %}
+                <div class="event-item">
+                    <span class="name">{{ evt.name }}</span>
+                    <span class="time">{{ evt.time }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 关注股 -->
+{% if watchlist %}
+<section class="card">
+    <div class="card-header">
+        <h2>
+            <span>👀</span>
+            关注股监控
+        </h2>
+        <span class="subtitle">实时行情</span>
+    </div>
+    <div class="card-body">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>现价</th>
+                    <th>涨跌</th>
+                    <th>成交量</th>
+                    <th>成交额</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for stock in watchlist %}
+                <tr>
+                    <td class="name-cell">{{ stock.code }}</td>
+                    <td>{{ stock.name }}</td>
+                    <td style="font-weight:600">{{ stock.price }}</td>
+                    <td class="pct {% if stock.change_pct > 0 %}up{% elif stock.change_pct < 0 %}down{% endif %}">
+                        {% if stock.change_pct > 0 %}+{% endif %}{{ stock.change_pct }}%
+                    </td>
+                    <td>{{ "{:,}".format(stock.volume) }}</td>
+                    <td>{{ stock.amount }}亿</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endif %}
+
+<!-- 今日信号 -->
+{% if signals %}
+<section class="card">
+    <div class="card-header">
+        <h2>
+            <span>📡</span>
+            今日信号
+        </h2>
+        <span class="subtitle">策略触发</span>
+    </div>
+    <div class="card-body">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>时间</th>
+                    <th>代码</th>
+                    <th>名称</th>
+                    <th>信号</th>
+                    <th>评分</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sig in signals %}
+                <tr>
+                    <td>{{ sig.time }}</td>
+                    <td>{{ sig.code }}</td>
+                    <td>{{ sig.name }}</td>
+                    <td>{{ sig.signal }}</td>
+                    <td>{{ sig.score }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% else %}
+<section class="card">
+    <div class="card-header">
+        <h2>
+            <span>📡</span>
+            今日信号
+        </h2>
+    </div>
+    <div class="card-body" style="text-align:center; color: var(--text-light); padding: 40px;">
+        暂无今日信号
+    </div>
+</section>
+{% endif %}
+{% endblock %}
+
+
+{% block extra_js %}
+<script>
+async function checkEngineStatus() {
+    try {
+        const resp = await fetch('/api/system/status');
+        const data = await resp.json();
+        const badge = document.getElementById('engine-status-badge');
+        if (data.running) {
+            badge.textContent = '事件引擎运行中 (' + data.triggers + '个触发器)';
+            badge.style.color = '#38a169';
+        } else {
+            badge.textContent = '事件引擎已停止';
+            badge.style.color = '#a0aec0';
+        }
+    } catch (e) {
+        document.getElementById('engine-status-badge').textContent = '状态检测失败';
+    }
+}
+
+async function startEngine() {
+    const msg = document.getElementById('control-msg');
+    msg.textContent = '正在启动...';
+    try {
+        const resp = await fetch('/api/system/start', {method: 'POST'});
+        const data = await resp.json();
+        msg.textContent = data.message;
+        msg.style.color = data.success ? '#38a169' : '#e53e3e';
+        setTimeout(checkEngineStatus, 1000);
+    } catch (e) {
+        msg.textContent = '启动失败: ' + e;
+        msg.style.color = '#e53e3e';
+    }
+}
+
+async function stopEngine() {
+    const msg = document.getElementById('control-msg');
+    msg.textContent = '正在停止...';
+    try {
+        const resp = await fetch('/api/system/stop', {method: 'POST'});
+        const data = await resp.json();
+        msg.textContent = data.message;
+        msg.style.color = data.success ? '#38a169' : '#e53e3e';
+        setTimeout(checkEngineStatus, 1000);
+    } catch (e) {
+        msg.textContent = '停止失败: ' + e;
+        msg.style.color = '#e53e3e';
+    }
+}
+
+checkEngineStatus();
+</script>
+{% endblock %}

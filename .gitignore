@@ -53,3 +53,10 @@ frontend_react/vite.config.js
 config/user.yaml
 *.env
 .env.local
+
+# Additional generated/output directories from local runs
+backend/quant_workbench.db
+output/
+reports/selfcheck/
+reports/ux/
+system_check_raw.*

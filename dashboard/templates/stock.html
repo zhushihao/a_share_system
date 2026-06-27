@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}{{ stock.name }} {{ stock.code }} - A股动量趋势系统{% endblock %}
+
+{% block content %}
+<!-- 实时行情 -->
+<section class="grid grid-3">
+    <div class="card">
+        <div class="card-body index-card">
+            <div class="name">{{ stock.name }} ({{ stock.code }})</div>
+            <div class="price" style="color: {% if stock.status == 'up' %}var(--up){% elif stock.status == 'down' %}var(--down){% else %}var(--flat){% endif %}">
+                {{ stock.price }}
+            </div>
+            <div class="change {{ stock.status }}">
+                {% if stock.change_pct > 0 %}+{% endif %}{{ stock.change_pct }}%
+            </div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body index-card">
+            <div class="name">今开</div>
+            <div class="price">{{ stock.open }}</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body index-card">
+            <div class="name">成交量</div>
+            <div class="price">{{ "{:,}".format(stock.volume) }}</div>
+            <div class="change flat">成交额 {{ stock.amount }}亿</div>
+        </div>
+    </div>
+</section>
+
+<!-- K线数据 -->
+<section class="card">
+    <div class="card-header">
+        <h2>
+            <span>📈</span>
+            K线数据（最近30日）
+        </h2>
+    </div>
+    <div class="card-body">
+        {% if kline %}
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>日期</th>
+                    <th>开盘</th>
+                    <th>最高</th>
+                    <th>最低</th>
+                    <th>收盘</th>
+                    <th>成交量</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in kline %}
+                <tr>
+                    <td>{{ row.date }}</td>
+                    <td>{{ row.open }}</td>
+                    <td>{{ row.high }}</td>
+                    <td>{{ row.low }}</td>
+                    <td style="font-weight:600">{{ row.close }}</td>
+                    <td>{{ "{:,}".format(row.volume) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div style="text-align:center; color: var(--text-light); padding: 40px;">
+            暂无K线数据
+        </div>
+        {% endif %}
+    </div>
+</section>
+
+<!-- 分析指标 -->
+{% if analysis %}
+<section class="card">
+    <div class="card-header">
+        <h2>
+            <span>🔍</span>
+            分析指标
+        </h2>
+    </div>
+    <div class="card-body">
+        <div class="health-grid">
+            <div class="health-item">
+                <div class="dot ok"></div>
+                <span class="label">动量评分</span>
+                <span class="value">{{ analysis.momentum_score }}/100</span>
+            </div>
+            <div class="health-item">
+                <div class="dot ok"></div>
+                <span class="label">趋势强度</span>
+                <span class="value">{{ analysis.trend_strength }}</span>
+            </div>
+            <div class="health-item">
+                <div class="dot ok"></div>
+                <span class="label">形态识别</span>
+                <span class="value">{{ analysis.pattern }}</span>
+            </div>
+            <div class="health-item">
+                <div class="dot ok"></div>
+                <span class="label">综合评分</span>
+                <span class="value">{{ analysis.overall_score }}/100</span>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endblock %}

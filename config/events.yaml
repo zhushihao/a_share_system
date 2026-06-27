@@ -1,0 +1,66 @@
+# 事件引擎配置
+events:
+  # 全局设置
+  global:
+    enabled: true
+    log_all_events: true          # 是否记录所有事件
+    max_event_history: 1000       # 最大事件历史数
+    handler_timeout_seconds: 60   # 处理器超时时间
+
+  # 触发器设置
+  triggers:
+    time:
+      enabled: true
+      interval_seconds: 60        # 时间检测间隔（秒）
+      enabled_events:             # 启用哪些时间事件（不配置则全部启用）
+        - market_pre_open
+        - market_open
+        - market_close
+        - market_post_close
+    
+    price:
+      enabled: false              # 默认关闭（需要配置watchlist）
+      interval_seconds: 30
+      watchlist: []               # 监控股票列表，如: ["000001", "600519", "300750"]
+      breakout_threshold: 0.05    # 突破阈值（5%）
+      drop_threshold: 0.05        # 暴跌阈值（5%，代码内部取负）
+      volume_spike_ratio: 2.0     # 成交量异动倍率（前5日均量的N倍）
+    
+    sector:
+      enabled: false
+      interval_seconds: 300       # 5分钟检测一次
+      surge_threshold: 0.03       # 板块涨幅阈值（3%）
+      drop_threshold: 0.03        # 板块跌幅阈值（3%，代码内部取负）
+    
+    system:
+      enabled: true
+      interval_seconds: 60
+      memory_threshold: 80      # 内存使用率告警阈值（%）
+      disk_threshold: 90          # 磁盘使用率告警阈值（%）
+
+  # 处理器设置
+  handlers:
+    logging:
+      enabled: true
+    
+    post_market:
+      enabled: true
+      # 收盘后执行复盘任务
+    
+    pre_market:
+      enabled: true
+      # 开盘前执行舆情分析
+    
+    price_alert:
+      enabled: false
+      # 价格告警推送
+    
+    sector_alert:
+      enabled: false
+      # 板块异动推送
+
+  # 调度器设置
+  scheduler:
+    auto_start: false             # 启动时自动运行（建议手动启动）
+    max_workers: 8                # 处理器线程池大小
+    graceful_shutdown: true       # 优雅关闭（等待处理完当前事件）

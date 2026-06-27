@@ -1,0 +1,23 @@
+# Quant Workbench v1.0 依赖
+# 安装方式: pip install -r requirements.txt
+
+# === Web 框架 ===
+fastapi==0.137.2
+uvicorn[standard]==0.49.0
+starlette==1.3.1
+
+# === 数据验证 ===
+pydantic==2.13.4
+
+# === 数据科学 ===
+pandas==3.0.2
+numpy==2.4.4
+
+# === 数据库 ===
+aiosqlite==0.22.1
+
+# === 行情数据源 (通达信) ===
+mootdx==0.11.7
+
+# === HTTP 客户端 (测试用) ===
+httpx==0.25.2

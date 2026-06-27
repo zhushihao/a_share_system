@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}板块详情 - A股动量趋势系统{% endblock %}
+
+{% block content %}
+<section class="card">
+    <div class="card-header">
+        <h2>
+            <span>🏭</span>
+            板块详情
+        </h2>
+        <span class="subtitle">全部板块数据（可配置）</span>
+    </div>
+    <div class="card-body">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>板块</th>
+                    <th>涨幅</th>
+                    <th>动量</th>
+                    <th>龙头股</th>
+                    <th>龙头涨幅</th>
+                    <th>成分股数</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for sector in sectors %}
+                <tr>
+                    <td class="name-cell">{{ sector.name }}</td>
+                    <td class="pct {% if sector.change_pct > 0 %}up{% elif sector.change_pct < 0 %}down{% endif %}">
+                        {% if sector.change_pct > 0 %}+{% endif %}{{ sector.change_pct }}%
+                    </td>
+                    <td class="bar-cell">
+                        <div class="bar">
+                            <div class="bar-fill {% if sector.change_pct > 0 %}up{% else %}down{% endif %}" style="width: {{ sector.momentum }}%"></div>
+                        </div>
+                    </td>
+                    <td class="name-cell">
+                        {{ sector.leader }}
+                        <span class="code">{{ sector.leader_code }}</span>
+                    </td>
+                    <td class="pct {% if sector.leader_change > 0 %}up{% elif sector.leader_change < 0 %}down{% endif %}">
+                        {% if sector.leader_change > 0 %}+{% endif %}{{ sector.leader_change }}%
+                    </td>
+                    <td>{{ sector.stock_count }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

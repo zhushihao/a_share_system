@@ -1,0 +1,224 @@
+# A股动量趋势交易系统 v2.0 - 全局配置文件
+
+# ==================== 核心阈值参数 ====================
+
+# 第二章：趋势定义
+trend:
+  ma20_window: 20                    # 20日均线窗口
+  ma20_slope_min: 0.0                # 20日均线斜率最小值（百分比）
+  new_high_window: 20                 # 创新高窗口（交易日）
+  volume_min_ratio: 1.2              # 成交量 >= 20日均量 × 1.2
+  volume_5d_min_ratio: 1.1           # 近5日平均成交量 >= 20日均量 × 1.1
+  price_min: 2.0                      # 股价最低门槛（元）
+  
+  # 流通市值门槛
+  market_cap:
+    institution_min: 80               # 机构趋势票：流通市值 > 80亿元
+    speculator_min: 20                # 游资连板票：流通市值 20-80亿元
+    speculator_max: 80
+    micro_cap_max: 20                 # 微盘股上限（排除）
+
+# 第三章：候选池
+pools:
+  trend_pool_max_per_sector: 5       # 单板块趋势池上限
+  watch_pool_max: 20                  # 观察池上限
+
+# 第四章：交通灯
+traffic_light:
+  # 绿灯条件
+  green:
+    pattern_stand_duration: 3          # 站稳颈线3日以上
+    breakout_volume_ratio:
+      main_board: 1.3                # 主板/科创板 >= 1.3倍
+      gem: 1.5                       # 创业板 >= 1.5倍
+      bse: 2.0                       # 北交所 >= 2.0倍
+    normal_volume_ratio: 0.8         # 非突破日成交量 >= 0.8倍
+  
+  # 黄灯条件
+  yellow:
+    near_target_pct: 0.10            # 距满足点<10%
+    abnormal_volume_ratio: 3.0        # 异常大量 >= 3.0倍
+    single_seat_ratio: 0.30           # 单一席位占比 > 30%
+    turnover_warning: 0.30            # 换手率连续2日>30%
+    financing_drop_pct: 0.05          # 融资余额近5日下降>5%
+  
+  # 红灯条件
+  red:
+    stop_loss_pct: 0.07               # 止损线7%
+    false_breakout_pct: 0.03          # 假突破：跌破颈线3%
+    sector_leader_drop: -0.05        # 板块龙头跌停，跟风股跌幅>-5%
+    northbound_outflow_3d: 100       # 北向连续3日净流出>100亿
+    kd_death_cross_level: 80         # KD在80以上死叉
+
+# 第五章：板块
+sector:
+  # 3+2法则
+  rule_3plus2:
+    new_high_20d_min: 3               # >=3只创20日新高
+    new_high_60d_min: 2               # >=2只创60日新高
+  
+  # 动量排名权重
+  ranking_weights:
+    return_20d: 0.25
+    new_high_ratio: 0.20
+    volume_change: 0.20
+    limit_up_quality: 0.15
+    continuity: 0.10
+    institutional: 0.10
+  
+  # 生命周期判定阈值
+  lifecycle:
+    fermentation_min_score: 60
+    climax_min_score: 70
+    climax_min_continuity: 3
+    decline_max_score: 30
+    decline_volume_drop: -0.30
+
+# 第六章：市场状态
+market_regime:
+  strong_trend:
+    ma20_slope: 0.0
+    up_ratio_5d: 0.60
+    zhaban_rate_max: 0.25
+    northbound_3d_min: 50            # 亿
+    limit_down_max: 10
+    position_limit: 0.80
+  
+  structural_trend:
+    ma20_range: 0.02                  # 20日均线附近震荡±2%
+    up_ratio_5d: [0.40, 0.60]
+    zhaban_rate: [0.25, 0.40]
+    position_limit: 0.50
+  
+  oscillation:
+    ma20_cross_10d: 3                 # 10日内穿越3次
+    up_ratio_5d: [0.35, 0.50]
+    zhaban_rate: [0.40, 0.60]
+    position_limit: 0.30
+  
+  risk_market:
+    ma20_slope: 0.0
+    up_ratio_5d: 0.35
+    zhaban_rate_min: 0.60
+    northbound_3d_outflow: 100
+    limit_down_min: 50
+    position_limit: 0.10
+
+# 第八章：买点
+buy_points:
+  breakout:
+    volume_ratio_60min: 1.5           # 60分钟成交量 >= 前5小时均量 × 1.5
+    volume_ratio_1h: 1.3              # 突破前一小时成交量 >= 1.3倍
+    max_distance_to_limit: 0.03      # 距涨停价>3%
+  
+  pullback:
+    pullback_ratio: [0.50, 0.618]    # 回撤位50%或61.8%
+    volume_ratio: 0.8                 # 回调量 < 前5小时均量 × 0.8
+  
+  breakdown_reversal:
+    max_days_to_recover: 5            # 3-5日内站回
+    volume_ratio: 1.2
+    first_position_max: 0.03          # 首笔仓位上限
+
+# 第九章：型态识别
+pattern:
+  # 局部极值检测
+  extrema:
+    order: 3                          # 滑动窗口半径
+    use_body: true                    # 使用实体价格（舍去异常影线）
+    tolerance: 0.05                  # 价格接近判断容忍度（5%）
+  
+  # 颈线拟合
+  neckline:
+    method: "robust"                 # robust=IQR过滤，ols=普通最小二乘
+  
+  # 型态时间跨度
+  span:
+    min: 20                           # 最少20个交易日
+    max: 200                          # 最多200个交易日
+    optimal: [40, 120]               # 最优时间跨度区间
+  
+  # 置信度评分
+  confidence:
+    # 去噪阈值
+    min_acceptable: 0.55             # 最低可接受置信度
+    min_for_report: 0.70              # 报告输出最低置信度（提升精度）
+    
+    # 评分权重
+    symmetry_bonus: 0.15              # 对称性加分
+    span_bonus: 0.15                # 时间跨度适中加分
+    neckline_r2_bonus: 0.10        # 颈线R²高分加分
+    breakout_bonus: 0.20            # 突破加分
+    volume_bonus: 0.10             # 成交量验证加分
+    
+    # 最大输出数量
+    max_per_stock: 10               # 单只股票最大输出型态数（从20降到10）
+    max_per_type: 3                 # 单种型态最大输出数（从5降到3）
+    
+    # 质量排序权重
+    quality_weights:
+      confidence: 0.50
+      span: 0.20
+      breakout_strength: 0.30
+
+# 第十章：风控
+risk_management:
+  # 单笔交易
+  single_trade:
+    max_risk_rate: 0.07              # 风险率上限7%
+    min_reward_rate: 0.20          # 报酬率下限20%
+    risk_reward_ratio: 3.0         # 风险报酬比 >= 1:3
+  
+  # 动态仓位
+  position_size:
+    strong_trend: 0.10               # 强趋势首笔10%
+    structural_trend: 0.05          # 结构性趋势首笔5%
+    oscillation: 0.03               # 震荡首笔3%
+    risk_market: 0.01               # 风险市首笔1%
+  
+  # 总仓位管理
+  total_position:
+    strong_trend: 0.80
+    structural_trend: 0.50
+    oscillation: 0.30
+    risk_market: 0.10
+  
+  # 加仓条件
+  pyramid_add:
+    min_float_profit: 0.05          # 浮盈5%+
+    max_add_ratio: 0.50             # 加仓比例 <= 原仓位50%
+    stop_after_add: 0.95            # 新止损 = 加仓价 × 0.95
+  
+  # 减仓/止盈
+  profit_taking:
+    target1_reduce: 0.50             # 目标1减仓50%
+    target2_reduce: 1.00            # 目标2清仓100%
+    yellow_reduce: [0.30, 0.50]     # 黄灯减仓30-50%
+  
+  # A股特殊风控
+  a_special:
+    limit_down_exit_ratio: 0.50      # 跌停封单/流通市值 > 0.5% 挂跌停卖出
+    pre_holiday_reduce: 0.30        # 长假前3日总仓位降至30%
+    no_new_after_1430: true         # 14:30后禁止开新仓
+
+# 第十二章：执行时间
+schedule:
+  post_market:
+    data_download: "19:00-19:30"
+    pattern_scan: "19:30-19:45"
+    sector_calc: "19:45-19:55"
+    traffic_light: "19:55-20:00"
+    report_generation: "20:00-20:10"
+    manual_review: "20:10-20:30"
+  
+  pre_market:
+    scan: "09:15-09:20"
+    filter: "09:20-09:25"
+    opening_eight: "09:25-09:30"
+  
+  trading:
+    morning: "09:30-11:30"
+    afternoon: "13:00-14:30"
+    no_new_after: "14:30"
+  
+  deviation_report: "15:00-17:00"

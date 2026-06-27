@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A股动量趋势系统 v5.0</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="header">
+        <h1>📊 A股动量趋势系统 v5.0</h1>
+        <div class="status">
+            <span id="server-badge" class="badge">检测中...</span>
+            <span id="current-time"></span>
+        </div>
+        <div class="refresh-bar">
+            <select id="refresh-interval" onchange="setRefreshInterval()">
+                <option value="0">不刷新</option>
+                <option value="10">10秒</option>
+                <option value="30" selected>30秒</option>
+                <option value="60">1分钟</option>
+            </select>
+            <button onclick="refreshData()">🔄 刷新</button>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- 离线提示 -->
+        <div id="offline-panel" class="card offline" style="display:none">
+            <div class="card-body" style="text-align:center; padding:40px">
+                <div style="font-size:48px; margin-bottom:16px">⚠️</div>
+                <h2 style="margin-bottom:12px">后端服务未连接</h2>
+                <p style="color:var(--text-secondary); margin-bottom:20px">
+                    后端 API 服务未运行，数据无法实时更新
+                </p>
+                <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap">
+                    <button onclick="checkServer()" style="background:var(--accent); color:white; border:none; padding:10px 24px; border-radius:6px; cursor:pointer; font-size:14px">
+                        🔄 重新检测
+                    </button>
+                    <button onclick="startBackend()" style="background:var(--success); color:white; border:none; padding:10px 24px; border-radius:6px; cursor:pointer; font-size:14px">
+                        ▶ 启动后端服务
+                    </button>
+                </div>
+                <p id="backend-msg" style="margin-top:16px; font-size:12px; color:var(--text-light)"></p>
+            </div>
+        </div>
+
+        <!-- 大盘指数 -->
+        <section id="indices-section" class="grid grid-3"></section>
+
+        <!-- 板块热点 + 系统控制 -->
+        <section class="grid grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <h2><span>🔥</span> 板块热点 TOP10</h2>
+                    <span class="subtitle">按动量评分排序</span>
+                </div>
+                <div class="card-body" id="sectors-body">
+                    <div style="text-align:center; color:var(--text-light); padding:40px">加载中...</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h2><span>⚡</span> 系统控制</h2>
+                    <span id="engine-status-badge" class="subtitle">检测中...</span>
+                </div>
+                <div class="card-body">
+                    <div class="health-grid" id="health-grid"></div>
+                    <hr style="margin:16px 0; border:none; border-top:1px solid var(--border)">
+                    <div style="display:flex; gap:10px; justify-content:center">
+                        <button id="btn-start" onclick="controlEngine('start')" style="background:var(--success); color:white; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:14px; font-weight:500">
+                            ▶ 启动事件引擎
+                        </button>
+                        <button id="btn-stop" onclick="controlEngine('stop')" style="background:var(--danger); color:white; border:none; padding:8px 20px; border-radius:6px; cursor:pointer; font-size:14px; font-weight:500">
+                            ⏹ 停止事件引擎
+                        </button>
+                    </div>
+                    <p id="control-msg" style="text-align:center; margin-top:8px; font-size:12px; color:var(--text-light)"></p>
+                    <hr style="margin:16px 0; border:none; border-top:1px solid var(--border)">
+                    <h3 style="font-size:14px; margin-bottom:12px; color:var(--text-secondary)">今日事件</h3>
+                    <div class="event-list" id="events-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 关注股 -->
+        <section id="watchlist-section" class="card" style="display:none">
+            <div class="card-header">
+                <h2><span>👀</span> 关注股监控</h2>
+                <span class="subtitle">实时行情</span>
+            </div>
+            <div class="card-body" id="watchlist-body"></div>
+        </section>
+
+        <!-- 今日信号 -->
+        <section class="card">
+            <div class="card-header">
+                <h2><span>📡</span> 今日信号</h2>
+            </div>
+            <div class="card-body" style="text-align:center; color:var(--text-light); padding:40px">
+                暂无今日信号
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <p>A股动量趋势系统 v5.0 | 前后端分离架构 | 数据源自通达信</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
