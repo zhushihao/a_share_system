@@ -1030,7 +1030,7 @@ class DataProviderService:
                             close=price,
                             volume=int(row.get("volume", latest.get("volume", 0))),
                             amount=float(row.get("amount", 0)) if "amount" in row and pd.notna(row.get("amount")) else None,
-                            source="mootdx-realtime",
+                            source="mootdx",
                             freq="1d",
                         )
             except Exception:
@@ -1048,7 +1048,7 @@ class DataProviderService:
                 close=float(latest.get("close", 0)),
                 volume=int(latest.get("volume", 0)),
                 amount=float(latest.get("amount", 0)) if "amount" in latest and pd.notna(latest.get("amount")) else None,
-                source="mootdx-offline",
+                source="mootdx",
                 freq="1d",
             )
         except Exception as e:
