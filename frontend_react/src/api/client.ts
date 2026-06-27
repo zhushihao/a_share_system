@@ -11,7 +11,7 @@ export const apiClient = axios.create({
 })
 
 export async function fetchHealth() {
-  const { data } = await apiClient.get('/health')
+  const { data } = await apiClient.get('/../health')
   return data
 }
 
