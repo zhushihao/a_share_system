@@ -488,7 +488,7 @@ export default function Watchlist() {
                           <span className="text-slate-600">{stock.name}</span>
                         </span>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-400">{stock.market}</span>
+                          <span className="text-xs text-slate-400">{{ sh: '沪市', sz: '深市', bj: '北交所' }[stock.market] || stock.market}</span>
                           <button
                             onClick={() => handleToggleStock(stock)}
                             disabled={busy}

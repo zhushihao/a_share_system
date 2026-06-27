@@ -401,7 +401,7 @@ export default function StockDetail() {
                   {signal.factors.map((f, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-xs">
                       <div className="w-20 text-slate-500 flex items-center justify-between">
-                        <span>{f.name === 'indicators' ? '技术指标' : f.name === 'patterns' ? '形态' : f.name === 'volume' ? '量价' : f.name === 'wave' ? '波浪' : f.name === 'supertrend' ? 'SuperTrend' : '支撑阻力'}</span>
+                        <span>{f.name === 'indicators' ? '技术指标' : f.name === 'patterns' ? '形态' : f.name === 'volume' ? '量价' : f.name === 'wave' ? '波浪' : f.name === 'supertrend' ? '超级趋势' : '支撑阻力'}</span>
                         <span className="text-slate-400">{(f.weight * 100).toFixed(0)}%</span>
                       </div>
                       <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">

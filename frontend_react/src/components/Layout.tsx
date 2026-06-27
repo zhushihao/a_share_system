@@ -48,7 +48,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       >
         <div className="flex items-center justify-between h-14 px-4 border-b border-slate-700">
           {sidebarOpen && (
-            <span className="font-bold text-lg tracking-tight">Quant WB</span>
+            <span className="font-bold text-lg tracking-tight">量化工作台</span>
           )}
           <button
             onClick={toggleSidebar}
