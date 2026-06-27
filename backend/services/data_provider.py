@@ -1019,9 +1019,10 @@ class DataProviderService:
                     price = float(row.get("price", 0))
                     if price > 0:
                         # 用实时价格更新 close
+                        name = str(row.get("name", "")).strip() or self._get_stock_name_map().get(code)
                         return StandardQuote(
                             symbol=code,
-                            name=str(row.get("name", "")).strip() or None,
+                            name=name,
                             timestamp=datetime.now(),
                             open=float(row.get("open", latest.get("open", 0))),
                             high=float(row.get("high", max(price, latest.get("high", 0)))),
