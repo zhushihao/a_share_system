@@ -116,7 +116,7 @@ export async function fetchSignals(params?: { symbol?: string; strategy?: string
 }
 
 export async function scanSignals(body: { symbols: string[]; strategies?: string[] }) {
-  const { data } = await apiClient.post('/signals/scan-daily', body)
+  const { data } = await apiClient.post('/signals/scan', body)
   return data
 }
 

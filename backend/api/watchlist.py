@@ -28,7 +28,7 @@ router = APIRouter()
 _indicator_executor = ThreadPoolExecutor(max_workers=4)
 
 
-def _offline_quote_to_dict(provider: DataProviderService, symbol: str) -> dict:
+def _offline_quote_to_dict(provider: DataProviderService, symbol: str, name: Optional[str] = None) -> dict:
     """从离线K线获取最新行情，转为 dict"""
     try:
         df = provider.fetch_ohlcv(symbol, period="daily", adjust="qfq")
@@ -36,7 +36,7 @@ def _offline_quote_to_dict(provider: DataProviderService, symbol: str) -> dict:
             latest = df.iloc[-1]
             return {
                 "symbol": symbol,
-                "name": None,
+                "name": name,
                 "timestamp": datetime.now().isoformat(),
                 "open": float(latest["open"]),
                 "high": float(latest["high"]),
@@ -235,12 +235,12 @@ async def list_watchlist_with_quotes(group: Optional[str] = None):
         quote_map = {q.symbol: q.model_dump() for q in quotes}
         
         # 1.1 如果实时行情为空，逐个用离线数据补充（确保自选股有行情显示）
-        missing_symbols = [s for s in symbols if s not in quote_map or not quote_map[s]]
-        for symbol in missing_symbols:
-            try:
-                quote_map[symbol] = _offline_quote_to_dict(provider, symbol)
-            except Exception:
-                pass
+        for item in items:
+            if item.symbol not in quote_map or not quote_map[item.symbol]:
+                try:
+                    quote_map[item.symbol] = _offline_quote_to_dict(provider, item.symbol, name=item.name)
+                except Exception:
+                    pass
         
         # 2. 并行计算评分（CPU 密集型，使用线程池）
         loop = asyncio.get_event_loop()
