@@ -27,6 +27,7 @@ export default function StockDetail() {
   const [ohlcv, setOhlcv] = useState<OHLCVRecord[]>([])
   const [chartData, setChartData] = useState<OHLCVRecord[]>([])
   const [indicators, setIndicators] = useState<TechIndicators>({})
+  const [indicatorLabels, setIndicatorLabels] = useState<Record<string, string>>({})
   const [score, setScore] = useState<{ score: number; level: string } | null>(null)
   const [patterns, setPatterns] = useState<PatternData[]>([])
   const [volumeAnalysis, setVolumeAnalysis] = useState<VolumeNodeData[]>([])
@@ -105,6 +106,7 @@ export default function StockDetail() {
       setOhlcv(o.data || [])
       setChartData(i.data || o.data || [])
       setIndicators(i.indicators || {})
+      setIndicatorLabels(i.labels || {})
       setScore(s)
       setPatterns(p.patterns || [])
       setVolumeAnalysis(v.nodes || [])
@@ -491,46 +493,45 @@ export default function StockDetail() {
         <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
           <h3 className="font-semibold text-slate-700 mb-4">技术指标</h3>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-slate-500">MA5</span>
-              <span className="font-medium">{indicators.ma5?.toFixed(2) ?? '-'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">MA20</span>
-              <span className="font-medium">{indicators.ma20?.toFixed(2) ?? '-'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">KDJ(K/D/J)</span>
-              <span className="font-medium">
-                {indicators.kdj_k?.toFixed(2) ?? '-'}/{indicators.kdj_d?.toFixed(2) ?? '-'}/{indicators.kdj_j?.toFixed(2) ?? '-'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">MACD(DIF/DEA)</span>
-              <span className="font-medium">
-                {indicators.macd_dif?.toFixed(3) ?? '-'}/{indicators.macd_dea?.toFixed(3) ?? '-'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">RSI6</span>
-              <span className="font-medium">{indicators.rsi6?.toFixed(2) ?? '-'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">BOLL(UP/MID/DOWN)</span>
-              <span className="font-medium">
-                {indicators.boll_up?.toFixed(2) ?? '-'}/{indicators.boll_mid?.toFixed(2) ?? '-'}/{indicators.boll_down?.toFixed(2) ?? '-'}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">OBV</span>
-              <span className="font-medium">{indicators.obv?.toFixed(0) ?? '-'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-500">DMI(+DI/-DI/ADX)</span>
-              <span className="font-medium">
-                {indicators.dmi_pdi?.toFixed(2) ?? '-'}/{indicators.dmi_mdi?.toFixed(2) ?? '-'}/{indicators.dmi_adx?.toFixed(2) ?? '-'}
-              </span>
-            </div>
+            {[
+              {
+                label: indicatorLabels.ma5 || 'MA5',
+                value: indicators.ma5?.toFixed(2) ?? '-',
+              },
+              {
+                label: indicatorLabels.ma20 || 'MA20',
+                value: indicators.ma20?.toFixed(2) ?? '-',
+              },
+              {
+                label: `KDJ(${indicatorLabels.kdj_k || 'K'}/${indicatorLabels.kdj_d || 'D'}/${indicatorLabels.kdj_j || 'J'})`,
+                value: `${indicators.kdj_k?.toFixed(2) ?? '-'}/${indicators.kdj_d?.toFixed(2) ?? '-'}/${indicators.kdj_j?.toFixed(2) ?? '-'}`,
+              },
+              {
+                label: `MACD(${indicatorLabels.macd_dif?.replace('MACD', '').trim() || 'DIF'}/${indicatorLabels.macd_dea?.replace('MACD', '').trim() || 'DEA'})`,
+                value: `${indicators.macd_dif?.toFixed(3) ?? '-'}/${indicators.macd_dea?.toFixed(3) ?? '-'}`,
+              },
+              {
+                label: indicatorLabels.rsi6 || 'RSI6',
+                value: indicators.rsi6?.toFixed(2) ?? '-',
+              },
+              {
+                label: `BOLL(${indicatorLabels.boll_up?.replace('布林', '').trim() || 'UP'}/${indicatorLabels.boll_mid?.replace('布林', '').trim() || 'MID'}/${indicatorLabels.boll_down?.replace('布林', '').trim() || 'DOWN'})`,
+                value: `${indicators.boll_up?.toFixed(2) ?? '-'}/${indicators.boll_mid?.toFixed(2) ?? '-'}/${indicators.boll_down?.toFixed(2) ?? '-'}`,
+              },
+              {
+                label: indicatorLabels.obv || 'OBV',
+                value: indicators.obv?.toFixed(0) ?? '-',
+              },
+              {
+                label: `DMI(${indicatorLabels.dmi_pdi?.replace('DMI', '').trim() || '+DI'}/${indicatorLabels.dmi_mdi?.replace('DMI', '').trim() || '-DI'}/${indicatorLabels.dmi_adx?.replace('DMI', '').trim() || 'ADX'})`,
+                value: `${indicators.dmi_pdi?.toFixed(2) ?? '-'}/${indicators.dmi_mdi?.toFixed(2) ?? '-'}/${indicators.dmi_adx?.toFixed(2) ?? '-'}`,
+              },
+            ].map((item) => (
+              <div key={item.label} className="flex justify-between">
+                <span className="text-slate-500">{item.label}</span>
+                <span className="font-medium">{item.value}</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -772,40 +773,44 @@ export default function StockDetail() {
       {/* K线数据明细 */}
       <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
         <h3 className="font-semibold text-slate-700 mb-4">K线明细</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500">
-              <tr>
-                <th className="px-3 py-2 text-left">日期</th>
-                <th className="px-3 py-2 text-right">开盘</th>
-                <th className="px-3 py-2 text-right">最高</th>
-                <th className="px-3 py-2 text-right">最低</th>
-                <th className="px-3 py-2 text-right">收盘</th>
-                <th className="px-3 py-2 text-right">成交量</th>
-                <th className="px-3 py-2 text-right">涨跌幅</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {ohlcv.slice(0, 20).map((row) => {
-                const rowChange = ((row.close - row.open) / row.open) * 100
-                return (
-                  <tr key={row.date} className="hover:bg-slate-50">
-                    <td className="px-3 py-2">{row.date}</td>
-                    <td className="px-3 py-2 text-right">{row.open.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{row.high.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{row.low.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{row.close.toFixed(2)}</td>
-                    <td className="px-3 py-2 text-right">{(row.volume / 10000).toFixed(1)}万</td>
-                    <td className={`px-3 py-2 text-right ${rowChange >= 0 ? 'text-up' : 'text-down'}`}>
-                      {rowChange >= 0 ? '+' : ''}
-                      {rowChange.toFixed(2)}%
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        {ohlcv.length === 0 ? (
+          <div className="text-center py-8 text-slate-400 text-sm">暂无K线数据</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">日期</th>
+                  <th className="px-3 py-2 text-right">开盘</th>
+                  <th className="px-3 py-2 text-right">最高</th>
+                  <th className="px-3 py-2 text-right">最低</th>
+                  <th className="px-3 py-2 text-right">收盘</th>
+                  <th className="px-3 py-2 text-right">成交量</th>
+                  <th className="px-3 py-2 text-right">涨跌幅</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {ohlcv.slice(0, 20).map((row) => {
+                  const rowChange = ((row.close - row.open) / row.open) * 100
+                  return (
+                    <tr key={row.date} className="hover:bg-slate-50">
+                      <td className="px-3 py-2">{row.date}</td>
+                      <td className="px-3 py-2 text-right">{row.open.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">{row.high.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">{row.low.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{row.close.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">{(row.volume / 10000).toFixed(1)}万</td>
+                      <td className={`px-3 py-2 text-right ${rowChange >= 0 ? 'text-up' : 'text-down'}`}>
+                        {rowChange >= 0 ? '+' : ''}
+                        {rowChange.toFixed(2)}%
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )
