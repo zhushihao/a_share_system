@@ -21,6 +21,52 @@ from backend.services.multi_period_resonance import analyze_resonance
 router = APIRouter()
 
 
+# 技术指标中文标签
+INDICATOR_LABELS = {
+    "ma5": "5日均线",
+    "ma10": "10日均线",
+    "ma20": "20日均线",
+    "ma60": "60日均线",
+    "macd_dif": "MACD差离值",
+    "macd_dea": "MACD信号线",
+    "macd_bar": "MACD柱状线",
+    "macd": "MACD",
+    "kdj_k": "KDJ-K线",
+    "kdj_d": "KDJ-D线",
+    "kdj_j": "KDJ-J线",
+    "rsi6": "RSI(6)",
+    "rsi12": "RSI(12)",
+    "rsi24": "RSI(24)",
+    "boll_up": "布林上轨",
+    "boll_mid": "布林中轨",
+    "boll_down": "布林下轨",
+    "obv": "OBV能量潮",
+    "dmi_pdi": "DMI+DI",
+    "dmi_mdi": "DMI-DI",
+    "dmi_adx": "DMI-ADX",
+}
+
+# 技术形态中文显示名称与描述词映射
+PATTERN_DISPLAY_NAMES = {
+    "v_reversal": "V型反转",
+    "head_shoulder_top": "头肩顶",
+    "head_shoulder_bottom": "头肩底",
+    "double_top": "双顶",
+    "double_bottom": "双底",
+    "triangle": "三角形",
+    "fibonacci_retracement": "斐波那契回调",
+}
+
+PATTERN_SUBTYPE_LABELS = {
+    "convergent": "收敛",
+    "ascending": "上升",
+    "descending": "下降",
+    "bottom": "底部",
+    "top": "顶部",
+    "breakout": "突破",
+}
+
+
 def _get_platform():
     """获取数据中台实例"""
     return get_data_platform_service()
@@ -99,14 +145,37 @@ async def get_ohlcv(
     if limit > 0:
         df = df.tail(limit).reset_index(drop=True)
     
+    # 对价格字段做精度处理（A股价格通常为2位小数）
+    price_cols = ["open", "high", "low", "close"]
+    for col in price_cols:
+        if col in df.columns:
+            df[col] = df[col].round(2)
+
     # 转换为字典列表
     records = df.to_dict("records")
-    
+
+    # 数据时效性检查：若最新数据延迟超过30天，返回告警信息
+    data_warning = None
+    delay_days = None
+    latest_date = None
+    if "date" in df.columns and len(df) > 0:
+        latest_date = df["date"].iloc[-1]
+        try:
+            latest_dt = pd.to_datetime(latest_date).date()
+            delay_days = (datetime.date.today() - latest_dt).days
+            if delay_days > 30:
+                data_warning = f"个股K线数据延迟 {delay_days} 天，最新数据日期为 {latest_dt}，建议更新本地数据源"
+        except Exception:
+            pass
+
     return {
         "symbol": symbol,
         "period": period,
         "adjust": adjust,
         "count": len(records),
+        "latest_date": latest_date,
+        "delay_days": delay_days,
+        "data_warning": data_warning,
         "data": records,
     }
 
@@ -139,6 +208,8 @@ async def get_indicators(
     latest_indicators = platform.get_latest_indicators(symbol, period=period, adjust=adjust)
     
     records = df.to_dict("records")
+    indicator_keys = list(latest_indicators.keys()) if latest_indicators else []
+    labels = {k: INDICATOR_LABELS.get(k, k) for k in indicator_keys}
     
     return {
         "symbol": symbol,
@@ -146,6 +217,7 @@ async def get_indicators(
         "adjust": adjust,
         "count": len(records),
         "indicators": latest_indicators or {},
+        "labels": labels,
         "data": records,
     }
 
@@ -222,6 +294,8 @@ async def get_patterns(
         np["pattern"] = ptype
         np["pattern_type"] = ptype
         np["name"] = ptype
+        # 中文显示名称
+        np["display_name"] = PATTERN_DISPLAY_NAMES.get(ptype, ptype)
         # position 映射：从 subtype 推断，若为空则根据形态类型推断
         subtype = np.get("subtype", "")
         if not subtype or not str(subtype).strip():
@@ -234,7 +308,11 @@ async def get_patterns(
                 subtype = "breakout"
         np["position"] = subtype
         np["accuracy"] = np.get("confidence", 0)
-        np["reason"] = np.get("description", "")
+        # 将 description 中的英文子类型翻译为中文，提升可读性
+        reason = str(np.get("description", "") or "")
+        for en, cn in PATTERN_SUBTYPE_LABELS.items():
+            reason = reason.replace(en, cn)
+        np["reason"] = reason
         normalized_patterns.append(np)
     
     return {

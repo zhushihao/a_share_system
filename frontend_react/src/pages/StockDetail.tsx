@@ -220,6 +220,9 @@ export default function StockDetail() {
               <div className="text-xs text-slate-400 mb-2 flex items-center gap-1">
                 <BarChart3 size={12} />
                 五档行情
+                {orderbook.source === 'simulated' && (
+                  <span className="ml-1 px-1 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">模拟数据</span>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="space-y-1">
@@ -342,7 +345,7 @@ export default function StockDetail() {
                           volume: '量价分析',
                           support_resistance: '支撑阻力',
                           wave: '波浪结构',
-                          supertrend: 'SuperTrend',
+                          supertrend: '超级趋势',
                         }
                         return strongest ? `${nameMap[strongest.name] || strongest.name} (${strongest.score > 0 ? '+' : ''}${strongest.score.toFixed(2)})` : '-'
                       })()}
@@ -638,7 +641,7 @@ export default function StockDetail() {
                   className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition"
                 >
                   <div>
-                    <div className="font-medium text-sm text-slate-800">{p.pattern}</div>
+                    <div className="font-medium text-sm text-slate-800">{p.display_name || p.pattern}</div>
                     <div className="text-xs text-slate-500 mt-0.5">
                       {p.start_date} ~ {p.end_date}
                     </div>
