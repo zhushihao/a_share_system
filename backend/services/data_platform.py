@@ -775,9 +775,15 @@ class DataPlatformService:
         if df is not None and len(df) > 0:
             try:
                 latest = df.iloc[-1]
+                # 尝试从 provider 的名称映射补充 name
+                name = None
+                try:
+                    name = self._provider._get_stock_name_map().get(symbol.zfill(6))
+                except Exception:
+                    pass
                 quote = StandardQuote(
                     symbol=symbol,
-                    name=None,
+                    name=name,
                     timestamp=datetime.now(),
                     open=float(latest["open"]),
                     high=float(latest["high"]),

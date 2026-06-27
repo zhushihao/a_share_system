@@ -51,6 +51,14 @@ class TradingSignal:
 
     def to_dict(self) -> Dict[str, Any]:
         type_label_map = {"BUY": "买入", "SELL": "卖出", "HOLD": "观望"}
+        factor_name_label_map = {
+            "indicators": "技术指标",
+            "patterns": "形态识别",
+            "volume": "量价分析",
+            "wave": "波浪结构",
+            "supertrend": "超级趋势",
+            "support_resistance": "支撑阻力",
+        }
         return {
             "type": self.type,
             "type_label": type_label_map.get(self.type, self.type),
@@ -68,6 +76,7 @@ class TradingSignal:
             "factors": [
                 {
                     "name": f.name,
+                    "name_label": factor_name_label_map.get(f.name, f.name),
                     "score": round(f.score, 3),
                     "weight": f.weight,
                     "description": f.description,

@@ -129,6 +129,7 @@ app.include_router(settings_router.router, prefix="/api/v1", tags=["settings"])
 
 
 @app.get("/api/health")
+@app.get("/health")
 async def health_check():
     import os
     from backend.config import settings
