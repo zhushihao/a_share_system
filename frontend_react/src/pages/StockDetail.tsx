@@ -286,7 +286,7 @@ export default function StockDetail() {
                       : 'bg-slate-100 text-slate-600'
                   }`}
                 >
-                  {signal.type === 'BUY' ? '买入' : signal.type === 'SELL' ? '卖出' : '观望'}
+                  {signal.type_label || (signal.type === 'BUY' ? '买入' : signal.type === 'SELL' ? '卖出' : '观望')}
                 </span>
                 <div className="text-right">
                   <div className="text-xs text-slate-400">置信度</div>
@@ -341,15 +341,8 @@ export default function StockDetail() {
                     <span className="font-medium text-slate-600">
                       {(() => {
                         const strongest = signal.factors?.reduce((a: any, b: any) => Math.abs(b.score) > Math.abs(a.score) ? b : a, signal.factors?.[0])
-                        const nameMap: Record<string, string> = {
-                          indicators: '技术指标',
-                          patterns: '形态识别',
-                          volume: '量价分析',
-                          support_resistance: '支撑阻力',
-                          wave: '波浪结构',
-                          supertrend: '超级趋势',
-                        }
-                        return strongest ? `${nameMap[strongest.name] || strongest.name} (${strongest.score > 0 ? '+' : ''}${strongest.score.toFixed(2)})` : '-'
+                        const label = strongest?.name_label || strongest?.name || '-'
+                        return strongest ? `${label} (${strongest.score > 0 ? '+' : ''}${strongest.score.toFixed(2)})` : '-'
                       })()}
                     </span>
                   </div>
@@ -403,7 +396,7 @@ export default function StockDetail() {
                   {signal.factors.map((f, idx) => (
                     <div key={idx} className="flex items-center gap-2 text-xs">
                       <div className="w-20 text-slate-500 flex items-center justify-between">
-                        <span>{f.name === 'indicators' ? '技术指标' : f.name === 'patterns' ? '形态' : f.name === 'volume' ? '量价' : f.name === 'wave' ? '波浪' : f.name === 'supertrend' ? '超级趋势' : '支撑阻力'}</span>
+                        <span>{f.name_label || f.name}</span>
                         <span className="text-slate-400">{(f.weight * 100).toFixed(0)}%</span>
                       </div>
                       <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">

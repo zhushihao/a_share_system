@@ -152,8 +152,12 @@ async def get_ohlcv(
         if col in df.columns:
             df[col] = df[col].round(2)
 
-    # 转换为字典列表
+    # 转换为字典列表，并再次确保价格字段为2位小数（消除浮点精度溢出）
     records = df.to_dict("records")
+    for r in records:
+        for col in price_cols:
+            if col in r:
+                r[col] = round(float(r[col]), 2)
 
     # 数据时效性检查：若最新数据延迟超过30天，返回告警信息
     data_warning = None
