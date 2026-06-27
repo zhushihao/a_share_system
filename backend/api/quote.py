@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Body
 from typing import List, Optional
 from datetime import datetime
+import random
 import pandas as pd
 
 from backend.services.data_platform import get_data_platform_service
@@ -252,14 +253,35 @@ async def get_tech_score(
 
 @router.get("/quote/{symbol}")
 async def get_realtime_quote(symbol: str):
-    """获取单股实时行情（5分钟缓存）"""
+    """获取单股实时行情（5分钟缓存），实时失败时从K线降级"""
     platform = _get_platform()
     quote = platform.get_stock_quote(symbol)
-    
-    if not quote:
-        raise HTTPException(status_code=404, detail=f"Quote not found for {symbol}")
-    
-    return quote
+
+    if quote:
+        return quote
+
+    # 降级：从最新K线构造 quote
+    try:
+        df = platform.get_ohlcv(symbol, period="daily", adjust="qfq")
+        if df is not None and len(df) > 0:
+            latest = df.iloc[-1]
+            return {
+                "symbol": symbol,
+                "name": None,
+                "timestamp": datetime.now().isoformat(),
+                "open": round(float(latest.get("open", 0)), 2),
+                "high": round(float(latest.get("high", 0)), 2),
+                "low": round(float(latest.get("low", 0)), 2),
+                "close": round(float(latest.get("close", 0)), 2),
+                "volume": int(latest.get("volume", 0)),
+                "amount": float(latest.get("amount", 0)) if "amount" in latest else None,
+                "source": "mootdx-offline-fallback",
+                "freq": "1d",
+            }
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=404, detail=f"Quote not found for {symbol}")
 
 
 # ═══════════════════════════════════════════════════════
@@ -855,8 +877,9 @@ async def get_orderbook(symbol: str):
             for i in range(1, 6):
                 bid_price = round(close - i * spread, 2)
                 ask_price = round(close + i * spread, 2)
-                bid_vol = max(100, avg_vol + i * 100)
-                ask_vol = max(100, avg_vol + i * 100)
+                # 加入随机扰动，避免 volume 呈现规律等差数列
+                bid_vol = max(100, int(avg_vol * (0.5 + random.random()) + i * random.randint(50, 500)))
+                ask_vol = max(100, int(avg_vol * (0.5 + random.random()) + i * random.randint(50, 500)))
                 bids.append({"level": i, "price": bid_price, "volume": bid_vol})
                 asks.append({"level": i, "price": ask_price, "volume": ask_vol})
 
@@ -867,7 +890,7 @@ async def get_orderbook(symbol: str):
                 "bids": bids,
                 "asks": asks,
                 "source": "simulated",
-                "note": "实时五档暂不可用，基于最新K线模拟",
+                "note": "实时五档暂不可用，基于最新K线模拟（数据仅供展示，不构成交易依据）",
             }
     except Exception:
         pass

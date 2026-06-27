@@ -50,8 +50,10 @@ class TradingSignal:
     trailing_stop: float = 0.0  # 追踪止损（价格移动1R后上移至保本价）
 
     def to_dict(self) -> Dict[str, Any]:
+        type_label_map = {"BUY": "买入", "SELL": "卖出", "HOLD": "观望"}
         return {
             "type": self.type,
+            "type_label": type_label_map.get(self.type, self.type),
             "signal_type": self.type,  # 兼容字段，满足 API 规范要求
             "confidence": round(self.confidence, 3),
             "entry_price": round(self.entry_price, 3),
