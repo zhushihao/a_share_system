@@ -38,6 +38,9 @@ except ImportError:
 # 用于 mootdx 超时控制的线程池
 _mootdx_fetch_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="mootdx_fetch")
 
+# 缓存 key 版本：当复权等核心计算逻辑变更时，通过升级版本号让旧缓存失效
+CACHE_KEY_VERSION = "v2"
+
 
 class DataProviderService:
     """
@@ -271,7 +274,7 @@ class DataProviderService:
         base_period, interval = self._resolve_minute_period(period)
         fetch_period = base_period if base_period != period else period
         
-        cache_key = f"ohlcv:{code}:{start_date}:{end_date}:{period}:{adjust}"
+        cache_key = f"ohlcv:{CACHE_KEY_VERSION}:{code}:{start_date}:{end_date}:{period}:{adjust}"
         
         # 1. 检查缓存
         cached = self._cache.get(cache_key)
@@ -802,18 +805,18 @@ class DataProviderService:
     def _persist_realtime_data(self, code: str, df: pd.DataFrame, period: str, adjust: str) -> None:
         """
         将实时数据写入 SQLite 持久化缓存
-        
-        表结构：realtime_kline_cache
+
+        表结构：realtime_kline_cache_v2
         - symbol, date, period, adjust, open, high, low, close, volume, amount, updated_at
         """
         try:
             import sqlite3
             db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "backend", "quant_workbench.db")
             os.makedirs(os.path.dirname(db_path), exist_ok=True)
-            
+
             conn = sqlite3.connect(db_path)
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS realtime_kline_cache (
+                CREATE TABLE IF NOT EXISTS realtime_kline_cache_v2 (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     symbol TEXT NOT NULL,
                     date TEXT NOT NULL,
@@ -829,9 +832,9 @@ class DataProviderService:
                     UNIQUE(symbol, date, period, adjust)
                 )
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_symbol ON realtime_kline_cache(symbol, period, adjust)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_date ON realtime_kline_cache(date)")
-            
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_symbol_v2 ON realtime_kline_cache_v2(symbol, period, adjust)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_rtk_date_v2 ON realtime_kline_cache_v2(date)")
+
             now = datetime.now().isoformat()
             for _, row in df.iterrows():
                 # 正确解析日期：支持 YYYYMMDD、YYYY-MM-DD、Timestamp 等多种格式
@@ -848,7 +851,7 @@ class DataProviderService:
                 if not date_val or len(date_val) != 8:
                     continue
                 conn.execute("""
-                    INSERT INTO realtime_kline_cache (symbol, date, period, adjust, open, high, low, close, volume, amount, updated_at)
+                    INSERT INTO realtime_kline_cache_v2 (symbol, date, period, adjust, open, high, low, close, volume, amount, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(symbol, date, period, adjust) DO UPDATE SET
                         open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close,
@@ -857,10 +860,10 @@ class DataProviderService:
                     code, date_val, period, adjust,
                     float(row.get("open", 0)), float(row.get("high", 0)), float(row.get("low", 0)),
                     float(row.get("close", 0)), int(row.get("volume", 0)),
-                    float(row.get("amount", 0)) if "amount" in row and pd.notna(row.get("amount")) else None,
+                    float(row.get("amount", 0)) if "amount" in df.columns and pd.notna(row.get("amount")) else None,
                     now
                 ))
-            
+
             conn.commit()
             conn.close()
             self._obs.log("INFO", f"Persisted realtime data for {code}: {len(df)} rows", "DataProviderService")
@@ -877,7 +880,7 @@ class DataProviderService:
             
             conn = sqlite3.connect(db_path)
             cursor = conn.execute(
-                "SELECT date, open, high, low, close, volume, amount FROM realtime_kline_cache WHERE symbol = ? AND period = ? AND adjust = ? ORDER BY date",
+                "SELECT date, open, high, low, close, volume, amount FROM realtime_kline_cache_v2 WHERE symbol = ? AND period = ? AND adjust = ? ORDER BY date",
                 (code, period, adjust)
             )
             rows = cursor.fetchall()

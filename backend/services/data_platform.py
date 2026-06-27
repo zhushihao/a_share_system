@@ -66,6 +66,9 @@ HIGH_LIMIT_PREFIXES = ("688", "300", "301", "689", "430", "83", "87", "88", "82"
 # 价格一致性检查容差（2分钱，覆盖浮点误差）
 PRICE_TOL = 0.02
 
+# 缓存 key 版本：当复权等核心计算逻辑变更时升级，让旧缓存自然失效
+CACHE_KEY_VERSION = "v2"
+
 
 # ─────────────────────────────────────────
 # 数据质量结果对象
@@ -842,7 +845,7 @@ class DataPlatformService:
         """
         # 根据周期选择 TTL
         ttl = PERIOD_TTL_MAP.get(period, DAILY_TTL)
-        cache_key = f"ohlcv:{period}:{symbol}:{adjust}"
+        cache_key = f"ohlcv:{CACHE_KEY_VERSION}:{period}:{symbol}:{adjust}"
 
         def _fetch():
             # 周/月/季/年 基于日数据聚合（mootdx StdReader 不支持 weekly/monthly）
@@ -965,7 +968,7 @@ class DataPlatformService:
         """
         # 根据周期选择 TTL
         ttl = PERIOD_TTL_MAP.get(period, DAILY_TTL)
-        cache_key = f"indicators:{period}:{symbol}:{adjust}"
+        cache_key = f"indicators:{CACHE_KEY_VERSION}:{period}:{symbol}:{adjust}"
 
         # 直接检查缓存（不走 _fetch_with_cache，因为指标计算是二次加工）
         if not force_refresh:
@@ -1048,7 +1051,7 @@ class DataPlatformService:
         Returns:
             DataFrame[quarter, code, open, high, low, close, volume, amount]
         """
-        cache_key = f"ohlcv:quarterly:{symbol}:{adjust}"
+        cache_key = f"ohlcv:{CACHE_KEY_VERSION}:quarterly:{symbol}:{adjust}"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return pd.DataFrame(cached) if isinstance(cached, list) else cached
@@ -1092,7 +1095,7 @@ class DataPlatformService:
         Returns:
             DataFrame[year, code, open, high, low, close, volume, amount]
         """
-        cache_key = f"ohlcv:yearly:{symbol}:{adjust}"
+        cache_key = f"ohlcv:{CACHE_KEY_VERSION}:yearly:{symbol}:{adjust}"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return pd.DataFrame(cached) if isinstance(cached, list) else cached
