@@ -21,20 +21,21 @@ jobs:
           fetch-depth: 0
 
       - name: 准备 diff
-        shell: bash
+        shell: powershell -ExecutionPolicy Bypass -Command "{0}"
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          git check-ref-format --allow-onelevel "$BASE_REF"
-          git fetch origin "$BASE_REF"
-          git diff "origin/$BASE_REF" > pr_diff.patch
+          git config --global --add safe.directory "$PWD"
+          git check-ref-format --allow-onelevel $env:BASE_REF
+          git fetch origin $env:BASE_REF
+          git diff "origin/$env:BASE_REF" | Out-File -FilePath pr_diff.patch -Encoding utf8
 
       - name: 运行 Claude Code 深度审查
-        shell: bash
+        shell: powershell -ExecutionPolicy Bypass -Command "{0}"
         run: |
-          claude -p --bare --allowed-tools Read,Grep -- \
-            "请按照 .github/review_prompts/deep_review.md 审查 pr_diff.patch，输出为 JSON 格式" \
-            > claude_review_report.json
+          $prompt = "请按照 .github/review_prompts/deep_review.md 审查 pr_diff.patch，输出为 JSON 格式"
+          $output = (claude -p --bare --allowed-tools Read,Grep -- $prompt) -Join "`n"
+          [System.IO.File]::WriteAllText("claude_review_report.json", $output, [System.Text.Encoding]::UTF8)
 
       - name: 发布审查报告
         uses: actions/github-script@v7
