@@ -112,7 +112,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
             _sentiment_cache_time = now
             return result
     except Exception as e:
-        get_obs().log("WARN", f"mootdx market overview failed: {e}", "MarketAPI")
+        get_obs().log("WARN", f"mootdx market overview failed: {type(e).__name__}", "MarketAPI")
 
     # 2. 降级：东方财富全市场快照 + 涨跌停
     try:
@@ -146,7 +146,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
         _sentiment_cache_time = now
         return result
     except Exception as e:
-        get_obs().log("WARN", f"eastmoney sentiment fallback failed: {e}", "MarketAPI")
+        get_obs().log("WARN", f"eastmoney sentiment fallback failed: {type(e).__name__}", "MarketAPI")
 
     # 3. 彻底不可用
     result = {
@@ -196,7 +196,7 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
             _hotspots_cache_time = now
             return result
     except Exception as e:
-        get_obs().log("WARN", f"mootdx hotspots failed: {e}", "MarketAPI")
+        get_obs().log("WARN", f"mootdx hotspots failed: {type(e).__name__}", "MarketAPI")
 
     # 2. 降级：东方财富板块涨幅榜
     try:
@@ -223,7 +223,7 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
             _hotspots_cache_time = now
             return result
     except Exception as e:
-        get_obs().log("WARN", f"eastmoney hotspots fallback failed: {e}", "MarketAPI")
+        get_obs().log("WARN", f"eastmoney hotspots fallback failed: {type(e).__name__}", "MarketAPI")
 
     _hotspots_cache = []
     _hotspots_cache_time = now
