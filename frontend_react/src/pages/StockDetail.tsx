@@ -51,7 +51,7 @@ export default function StockDetail() {
 
   const [period, setPeriod] = useState<'minute' | 'daily' | 'weekly' | 'monthly'>('daily')
   const [viewMode, setViewMode] = useState<'kline' | 'intraday'>('kline')
-  const [defaultAdjust, setDefaultAdjust] = useState<string>('qfq')
+  const [adjustMode, setAdjustMode] = useState<string>('qfq')
 
   // 加载用户默认复权设置
   useEffect(() => {
@@ -59,7 +59,7 @@ export default function StockDetail() {
       .then((settings) => {
         const adj = settings?.default_adjust
         if (adj && ['qfq', 'hfq', 'none'].includes(adj)) {
-          setDefaultAdjust(adj)
+          setAdjustMode(adj)
         }
       })
       .catch(() => {})
@@ -71,13 +71,13 @@ export default function StockDetail() {
     try {
       const [q, o, i, s, p, v, sr, sig, res, ob, pr, id] = await Promise.all([
         fetchQuote(symbol).catch(() => null),
-        fetchOHLCV(symbol, { period, limit: 120, adjust: defaultAdjust }),
-        fetchIndicators(symbol, { period, limit: 120, adjust: defaultAdjust }),
+        fetchOHLCV(symbol, { period, limit: 120, adjust: adjustMode }),
+        fetchIndicators(symbol, { period, limit: 120, adjust: adjustMode }),
         fetchScore(symbol).catch(() => null),
-        fetchPatterns(symbol, { period, limit: 120, adjust: defaultAdjust }),
-        fetchVolumeAnalysis(symbol, { period, limit: 120, adjust: defaultAdjust }),
-        fetchSupportResistance(symbol, { period, limit: 120, adjust: defaultAdjust }),
-        fetchSignal(symbol, { period, adjust: defaultAdjust }).catch(() => null),
+        fetchPatterns(symbol, { period, limit: 120, adjust: adjustMode }),
+        fetchVolumeAnalysis(symbol, { period, limit: 120, adjust: adjustMode }),
+        fetchSupportResistance(symbol, { period, limit: 120, adjust: adjustMode }),
+        fetchSignal(symbol, { period, adjust: adjustMode }).catch(() => null),
         fetchResonance(symbol).catch(() => null),
         fetchOrderbook(symbol).catch(() => null),
         fetchProfile(symbol).catch(() => null),
@@ -121,7 +121,7 @@ export default function StockDetail() {
       setIsRefreshing(false)
       setLoading(false)
     }
-  }, [symbol, period, defaultAdjust])
+  }, [symbol, period, adjustMode])
 
   // 初始加载
   useEffect(() => {
@@ -537,9 +537,24 @@ export default function StockDetail() {
 
       {/* K线图 / 分时图 */}
       <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-semibold text-slate-700">{viewMode === 'intraday' ? '分时图' : 'K线图'}</h3>
-          <div className="flex gap-1">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-slate-700">{viewMode === 'intraday' ? '分时图' : 'K线图'}</h3>
+            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 text-[10px] rounded">
+              {adjustMode === 'qfq' ? '前复权' : adjustMode === 'hfq' ? '后复权' : '不复权'}
+            </span>
+          </div>
+          <div className="flex gap-1 items-center">
+            <select
+              value={adjustMode}
+              onChange={(e) => setAdjustMode(e.target.value)}
+              className="px-2 py-1 text-xs border border-slate-200 rounded-md bg-white text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              title="复权方式"
+            >
+              <option value="qfq">前复权</option>
+              <option value="hfq">后复权</option>
+              <option value="none">不复权</option>
+            </select>
             <button
               onClick={() => setViewMode('intraday')}
               className={`px-3 py-1 text-xs rounded-md transition ${
