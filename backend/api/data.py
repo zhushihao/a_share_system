@@ -117,6 +117,9 @@ async def get_stock_list(
             elif market.lower() == "bj":
                 df = df[df["code"].astype(str).str.startswith(("4", "8"))]
 
+        # 同一 code 可能同时存在 sh/sz 两条记录，按 code 去重保留第一条
+        df = df.drop_duplicates(subset=["code"], keep="first")
+
         # 按代码排序，避免截断时丢失特定股票（如 300308 中际旭创）
         df = df.sort_values(by="code").reset_index(drop=True).head(limit)
 

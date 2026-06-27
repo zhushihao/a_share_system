@@ -1002,9 +1002,18 @@ async def get_market_overview():
             "note": "实时情绪数据暂不可用（非交易日/Quotes客户端未连接）",
         }
     
+    # 添加最新交易日标注（非交易日时数据会落在最后一个交易日）
+    latest_trading_day = None
+    if results:
+        try:
+            latest_trading_day = max(r["date"] for r in results if r.get("date"))
+        except ValueError:
+            latest_trading_day = None
+
     return {
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
+        "latest_trading_day": latest_trading_day,
         "indices": results,
         "sentiment": sentiment,
     }

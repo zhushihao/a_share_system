@@ -35,7 +35,7 @@ function IndexCard({ name, close, change, changePct, volume, date }: {
         {close.toFixed(2)}
       </div>
       <div className={`text-sm mt-1 ${isUp ? 'text-up' : 'text-down'}`}>
-        {change >= 0 ? '+' : ''}
+        {isUp ? '▲' : '▼'} {change >= 0 ? '+' : ''}
         {change.toFixed(2)} ({changePct >= 0 ? '+' : ''}
         {changePct.toFixed(2)}%)
       </div>
@@ -113,6 +113,11 @@ function MarketSentiment({ data, loading }: { data: any; loading: boolean }) {
           </div>
         </div>
       </div>
+      {data?.data_date && (
+        <div className="text-xs text-slate-400 mt-2 pt-2 border-t border-slate-100">
+          数据日期：{data.data_date}
+        </div>
+      )}
     </div>
   )
 }
@@ -165,7 +170,7 @@ function HotBlocks({ data, loading }: { data: any[]; loading: boolean }) {
             </div>
             <div className="text-right">
               <div className={`text-sm font-semibold ${(b.change_pct || 0) >= 0 ? 'text-up' : 'text-down'}`}>
-                {(b.change_pct || 0) >= 0 ? '+' : ''}
+                {(b.change_pct || 0) >= 0 ? '▲' : '▼'} {(b.change_pct || 0) >= 0 ? '+' : ''}
                 {(b.change_pct || 0).toFixed(2)}%
               </div>
               <div className="text-xs text-slate-400">
@@ -266,6 +271,7 @@ export default function Dashboard() {
   const [healthLoading, setHealthLoading] = useState(true)
 
   const [indexData, setIndexData] = useState<any[]>([])
+  const [latestTradingDay, setLatestTradingDay] = useState<string | null>(null)
   const [indexLoading, setIndexLoading] = useState(true)
 
   useEffect(() => {
@@ -273,6 +279,7 @@ export default function Dashboard() {
       try {
         const resp = await fetchMarketOverview()
         setIndexData(resp.indices || [])
+        setLatestTradingDay(resp.latest_trading_day || null)
       } catch (e) {
         console.error('Failed to load market overview', e)
       } finally {
@@ -343,6 +350,11 @@ export default function Dashboard() {
           ))
         )}
       </div>
+      {latestTradingDay && !indexLoading && (
+        <div className="text-xs text-slate-400 -mt-2 mb-2">
+          最新交易日：{latestTradingDay}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
