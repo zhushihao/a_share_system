@@ -144,3 +144,4 @@ a_share_system/
 ## 许可证
 
 MIT
+# direct push test
