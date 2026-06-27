@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Node.js
+node_modules/
+frontend_react/node_modules/
+frontend_react/dist/
+frontend_react/.vite/
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+data/raw/tmp/
+data/cache/
+data/system.db
+backend/data/cache/
+backend/data/system.db
+backend/data/test_*.db
+data/backend/*.db
+data/test_*.db
+reports/.backups/
+*.tsbuildinfo
+output/*.json
+output/*.csv
+tdx_check_results_now.json
+frontend_react/vite.config.d.ts
+frontend_react/vite.config.js
+*.docx
+.remember/
+config/user.yaml
+*.env
+.env.local
