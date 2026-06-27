@@ -791,7 +791,7 @@ class DataPlatformService:
                     close=float(latest["close"]),
                     volume=int(latest["volume"]),
                     amount=float(latest.get("amount", 0)) if "amount" in latest else None,
-                    source="mootdx-offline",
+                    source="mootdx",
                     freq="1d",
                 )
                 return quote
