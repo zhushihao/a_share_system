@@ -42,6 +42,7 @@ export interface OHLCVRecord {
 
 export interface PatternData {
   pattern: string
+  display_name?: string
   confidence: number
   start_date: string
   end_date: string
@@ -113,7 +114,9 @@ export interface SignalItem {
   name: string
   timestamp: string
   signal_type: 'BUY' | 'SELL' | 'WATCH' | 'ALERT'
+  signal_type_label?: string
   strategy: string
+  strategy_label?: string
   category: 'daily' | 'intraday'
   description: string
   confidence: number
@@ -140,6 +143,7 @@ export interface SignalStrategy {
 
 export interface FactorScore {
   name: string
+  name_label?: string
   score: number
   weight: number
   description: string
@@ -148,6 +152,7 @@ export interface FactorScore {
 
 export interface TradingSignal {
   type: 'BUY' | 'SELL' | 'HOLD'
+  type_label?: string
   confidence: number
   entry_price: number
   stop_loss: number
