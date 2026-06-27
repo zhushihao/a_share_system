@@ -21,6 +21,8 @@ from fastapi import APIRouter, Query
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
+from backend.core.observability import get_obs
+
 router = APIRouter()
 
 # 轻量线程池（用于并发获取板块成分股数量）
@@ -109,8 +111,8 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
             _sentiment_cache = result
             _sentiment_cache_time = now
             return result
-    except Exception:
-        pass
+    except Exception as e:
+        get_obs().log("WARN", f"mootdx market overview failed: {e}", "MarketAPI")
 
     # 2. 降级：东方财富全市场快照 + 涨跌停
     try:
@@ -143,8 +145,8 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
         _sentiment_cache = result
         _sentiment_cache_time = now
         return result
-    except Exception:
-        pass
+    except Exception as e:
+        get_obs().log("WARN", f"eastmoney sentiment fallback failed: {e}", "MarketAPI")
 
     # 3. 彻底不可用
     result = {
@@ -193,8 +195,8 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
             _hotspots_cache = result
             _hotspots_cache_time = now
             return result
-    except Exception:
-        pass
+    except Exception as e:
+        get_obs().log("WARN", f"mootdx hotspots failed: {e}", "MarketAPI")
 
     # 2. 降级：东方财富板块涨幅榜
     try:
@@ -220,8 +222,8 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
             _hotspots_cache = result
             _hotspots_cache_time = now
             return result
-    except Exception:
-        pass
+    except Exception as e:
+        get_obs().log("WARN", f"eastmoney hotspots fallback failed: {e}", "MarketAPI")
 
     _hotspots_cache = []
     _hotspots_cache_time = now

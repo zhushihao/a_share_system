@@ -233,7 +233,7 @@ async def list_watchlist_with_quotes(group: Optional[str] = None):
         # 1. 批量获取实时行情（一次 IO）
         quotes = provider.fetch_realtime_quotes(symbols)
         quote_map = {q.symbol: q.model_dump() for q in quotes}
-        
+
         # 1.1 如果实时行情为空，逐个用离线数据补充（确保自选股有行情显示）
         for item in items:
             if item.symbol not in quote_map or not quote_map[item.symbol]:
@@ -241,6 +241,12 @@ async def list_watchlist_with_quotes(group: Optional[str] = None):
                     quote_map[item.symbol] = _offline_quote_to_dict(provider, item.symbol, name=item.name)
                 except Exception:
                     pass
+
+        # 1.2 兜底：确保 quote.name 不为 null（用数据库中的 item.name 回填）
+        for item in items:
+            q = quote_map.get(item.symbol)
+            if q and not q.get("name") and item.name:
+                q["name"] = item.name
         
         # 2. 并行计算评分（CPU 密集型，使用线程池）
         loop = asyncio.get_event_loop()
