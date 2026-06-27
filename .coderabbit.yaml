@@ -1,0 +1,40 @@
+language: "zh-CN"
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: true
+
+  path_filters:
+    - "!data/raw/**"
+    - "!data/raw/tmp/**"
+    - "!frontend_react/node_modules/**"
+    - "!frontend_react/dist/**"
+    - "!**/__pycache__/**"
+    - "!frontend_react/package-lock.json"
+
+  path_instructions:
+    - path: "backend/**/*.py"
+      instructions: |
+        关注 FastAPI 路由参数校验、Pydantic 模型、SQL 注入风险、异常处理。
+        检查是否有未验证的用户输入直接拼接到 SQL 或文件路径。
+    - path: "frontend_react/src/**/*.tsx"
+      instructions: |
+        关注 React Hook 依赖、潜在内存泄漏、TypeScript 类型安全、UI 状态管理。
+    - path: "core/**/*.py"
+      instructions: |
+        这是系统核心模块，关注算法正确性、边界条件、性能热点、数据契约。
+    - path: "strategy/**/*.py"
+      instructions: |
+        这是交易策略模块，关注信号计算逻辑、止损条件、滑点/手续费假设是否合理。
+
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches: ["main"]
+
+  chat:
+    auto_reply: true
