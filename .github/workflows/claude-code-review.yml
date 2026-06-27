@@ -1,0 +1,122 @@
+name: Claude Code Deep Review
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+jobs:
+  deep-review:
+    if: contains(github.event.pull_request.labels.*.name, 'deep-review')
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+    steps:
+      - name: 检出 PR 代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 准备审查上下文
+        id: context
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git check-ref-format --allow-onelevel "$BASE_REF"
+          git fetch origin "$BASE_REF"
+          git diff "origin/$BASE_REF" > pr_diff.patch
+          echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          echo "base_ref=${{ github.event.pull_request.base.ref }}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: 运行 Claude Code 深度审查
+        shell: bash
+        run: |
+          claude -p --bare --allowed-tools Read,Grep -- \
+            "请按照 .github/review_prompts/deep_review.md 审查 pr_diff.patch，输出为 JSON 格式" \
+            > claude_review_report.json
+
+      - name: 解析并发布审查报告
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const reportPath = path.join(process.env.GITHUB_WORKSPACE, 'claude_review_report.json');
+            const raw = fs.readFileSync(reportPath, 'utf8');
+            let report;
+            try {
+              // Try to extract JSON from markdown code block
+              const match = raw.match(/```json\s*([\s\S]*?)\s*```/);
+              report = match ? JSON.parse(match[1]) : JSON.parse(raw);
+            } catch (e) {
+              report = {
+                summary: "Claude Code 输出解析失败，请查看原始输出。",
+                severity: "warning",
+                findings: [],
+                action_required: ["请人工检查原始输出"]
+              };
+            }
+
+            const blocking = report.findings?.filter(f => f.severity === 'blocking') || [];
+            const warnings = report.findings?.filter(f => f.severity === 'warning') || [];
+            const infos = report.findings?.filter(f => f.severity === 'info') || [];
+
+            const formatRows = items => items.length === 0
+              ? '无\n'
+              : items.map(f => `| \`${f.file}\` | ${f.line || '-'} | ${f.description} | ${f.suggestion || '-'} |`).join('\n') + '\n';
+
+            const body = [
+              '## 🤖 Claude Code 深度审查报告',
+              '',
+              `**PR:** #${process.env.PR_NUMBER}`,
+              '**审查范围:** 核心业务逻辑 / 安全 / 大型重构',
+              `**整体评级:** ${blocking.length > 0 ? '🚫 需要修改' : warnings.length > 0 ? '⚠️ 建议处理' : '✅ 通过'}`,
+              '',
+              '### 🚫 阻塞项（必须解决）',
+              '',
+              '| 文件 | 位置 | 问题 | 建议 |',
+              '|------|------|------|------|',
+              formatRows(blocking),
+              '### ⚠️ 警告项（建议处理）',
+              '',
+              '| 文件 | 位置 | 问题 | 建议 |',
+              '|------|------|------|------|',
+              formatRows(warnings),
+              '### ℹ️ 建议项（可选）',
+              '',
+              infos.length === 0 ? '无' : infos.map(f => `- \`${f.file}\`: ${f.description}`).join('\n'),
+              '',
+              '**处理要求：** 阻塞项必须全部解决或经人类 reviewer 显式同意忽略后，才能合并。'
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt(process.env.PR_NUMBER, 10),
+              body
+            });
+
+            const conclusion = blocking.length > 0 ? 'failure' : 'success';
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: 'Claude Code Deep Review',
+              head_sha: process.env.HEAD_SHA,
+              status: 'completed',
+              conclusion,
+              output: {
+                title: conclusion === 'failure' ? '发现阻塞项' : '深度审查通过',
+                summary: report.summary || '审查完成',
+                text: `blocking: ${blocking.length}, warning: ${warnings.length}, info: ${infos.length}`
+              }
+            });

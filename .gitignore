@@ -60,3 +60,6 @@ output/
 reports/selfcheck/
 reports/ux/
 system_check_raw.*
+
+# GitHub Actions self-hosted runner (local installation)
+actions-runner/
