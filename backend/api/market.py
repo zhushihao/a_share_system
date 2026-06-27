@@ -61,6 +61,20 @@ def _get_data_platform():
     return get_data_platform_service()
 
 
+def _get_latest_trading_day() -> Optional[str]:
+    """获取最新交易日（以上证指数离线K线最后日期为准）"""
+    try:
+        from backend.services.data_provider import get_data_provider_service
+        df = get_data_provider_service().fetch_ohlcv(
+            "sh000001", period="daily", adjust="none", source="offline"
+        )
+        if df is not None and len(df) > 0:
+            return str(df.iloc[-1].get("date", ""))
+    except Exception:
+        pass
+    return None
+
+
 def _fetch_index_quotes() -> List[Dict[str, Any]]:
     """获取四大指数实时行情（5分钟缓存）"""
     platform = _get_data_platform()
@@ -95,6 +109,8 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
         if (now - _sentiment_cache_time).total_seconds() < _HOTSPOTS_CACHE_TTL:
             return _sentiment_cache
 
+    data_date = _get_latest_trading_day()
+
     # 1. 优先 mootdx 全市场概览
     try:
         platform = _get_data_platform()
@@ -106,6 +122,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
                 "limit_down": overview.get("limit_down"),
                 "advancing": overview.get("advancing"),
                 "declining": overview.get("declining"),
+                "data_date": data_date,
                 "source": "mootdx",
             }
             _sentiment_cache = result
@@ -140,6 +157,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
             "limit_down": limit_down if limit_down > 0 else None,
             "advancing": advancing if advancing > 0 else None,
             "declining": declining if declining > 0 else None,
+            "data_date": data_date,
             "source": "eastmoney",
         }
         _sentiment_cache = result
@@ -155,6 +173,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
         "limit_down": None,
         "advancing": None,
         "declining": None,
+        "data_date": data_date,
         "source": "unavailable",
     }
     _sentiment_cache = result
@@ -165,7 +184,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
 def _fetch_hotspots() -> List[Dict[str, Any]]:
     """
     获取热点板块 TOP10（5分钟缓存）
-    数据来源：优先 mootdx Quotes 实时接口；失败时降级到东方财富板块涨幅榜。
+    数据来源：优先东方财富真实板块涨幅榜；失败时降级到 mootdx 交易所层面数据。
     """
     global _hotspots_cache, _hotspots_cache_time
     now = datetime.now()
@@ -173,32 +192,7 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
         if (now - _hotspots_cache_time).total_seconds() < _HOTSPOTS_CACHE_TTL:
             return _hotspots_cache
 
-    # 1. 优先 mootdx
-    try:
-        platform = _get_data_platform()
-        hotspots = platform.get_hotspots()
-        if hotspots:
-            result = [
-                {
-                    "block_code": "",
-                    "block_name": h["block_name"],
-                    "change_pct": h["change_pct"],
-                    "volume_ratio": 1.0,
-                    "money_flow": 0.0,
-                    "rank": i + 1,
-                    "stock_count": h.get("stock_count", 0),
-                    "up_count": h.get("up_count", 0),
-                    "limit_up_count": 0,
-                }
-                for i, h in enumerate(hotspots)
-            ]
-            _hotspots_cache = result
-            _hotspots_cache_time = now
-            return result
-    except Exception as e:
-        get_obs().log("WARN", f"mootdx hotspots failed: {type(e).__name__}", "MarketAPI")
-
-    # 2. 降级：东方财富板块涨幅榜
+    # 1. 优先东方财富真实板块涨幅榜
     try:
         network_sectors = _fetch_sector_list_from_network()
         if network_sectors is not None and len(network_sectors) > 0:
@@ -223,7 +217,32 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
             _hotspots_cache_time = now
             return result
     except Exception as e:
-        get_obs().log("WARN", f"eastmoney hotspots fallback failed: {type(e).__name__}", "MarketAPI")
+        get_obs().log("WARN", f"eastmoney hotspots failed: {type(e).__name__}", "MarketAPI")
+
+    # 2. 降级：mootdx 交易所层面数据
+    try:
+        platform = _get_data_platform()
+        hotspots = platform.get_hotspots()
+        if hotspots:
+            result = [
+                {
+                    "block_code": "",
+                    "block_name": h["block_name"],
+                    "change_pct": h["change_pct"],
+                    "volume_ratio": 1.0,
+                    "money_flow": 0.0,
+                    "rank": i + 1,
+                    "stock_count": h.get("stock_count", 0),
+                    "up_count": h.get("up_count", 0),
+                    "limit_up_count": 0,
+                }
+                for i, h in enumerate(hotspots)
+            ]
+            _hotspots_cache = result
+            _hotspots_cache_time = now
+            return result
+    except Exception as e:
+        get_obs().log("WARN", f"mootdx hotspots fallback failed: {type(e).__name__}", "MarketAPI")
 
     _hotspots_cache = []
     _hotspots_cache_time = now

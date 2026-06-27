@@ -508,6 +508,11 @@ export default function Watchlist() {
                   })}
                 </div>
               )}
+              {showSearchDropdown && searchResults.length === 0 && !searchLoading && searchQuery.trim() && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-10 py-3 text-center text-sm text-slate-400">
+                  未找到匹配股票
+                </div>
+              )}
             </div>
             {searchResults.length > 0 && (
               <button
@@ -607,6 +612,7 @@ export default function Watchlist() {
                       {quote ? quote.close.toFixed(2) : '-'}
                     </td>
                     <td className={`px-4 py-3 text-right font-medium ${changePct >= 0 ? 'text-up' : 'text-down'}`}>
+                      <span className="mr-1">{changePct >= 0 ? '▲' : '▼'}</span>
                       {changePct >= 0 ? '+' : ''}
                       {changePct.toFixed(2)}%
                     </td>

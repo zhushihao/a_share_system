@@ -1036,9 +1036,10 @@ class DataProviderService:
                 pass
             
             # 返回离线最新数据
+            name = self._get_stock_name_map().get(code)
             return StandardQuote(
                 symbol=code,
-                name=None,
+                name=name,
                 timestamp=datetime.now(),
                 open=float(latest.get("open", 0)),
                 high=float(latest.get("high", 0)),
