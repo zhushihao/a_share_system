@@ -12,6 +12,7 @@ Data Management API - 数据管理接口
 
 import os
 import json
+import logging
 import pandas as pd
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -577,8 +578,9 @@ async def data_health():
             for name, info in sc.get("data_sources", {}).items():
                 if info.get("status") not in ("ok", None):
                     quality_issues.append(f"{name}: {info['status']}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger = logging.getLogger("data")
+        logger.warning(f"聚合数据中台自检失败: {type(e).__name__}: {e}")
 
     return {
         "status": status,

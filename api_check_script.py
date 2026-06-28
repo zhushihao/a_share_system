@@ -9,16 +9,19 @@ BASE = 'http://localhost:5889'
 sys.stdout.reconfigure(encoding='utf-8')
 
 def curl(path):
-    r = subprocess.run(
-        ['curl', '-s', '-w', '\nHTTP_CODE:%{http_code}', f'{BASE}{path}'],
-        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30
-    )
-    out = r.stdout.strip().split('HTTP_CODE:')
-    body = out[0].strip() if len(out) > 0 else ''
-    code = out[1].strip() if len(out) > 1 else '0'
+    try:
+        r = subprocess.run(
+            ['curl', '-s', '-w', '\nHTTP_CODE:%{http_code}', f'{BASE}{path}'],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30
+        )
+        out = r.stdout.strip().split('HTTP_CODE:')
+        body = out[0].strip() if len(out) > 0 else ''
+        code = out[1].strip() if len(out) > 1 else '0'
+    except Exception as e:
+        return {'status': 0, 'data': None, 'raw': f'请求失败: {type(e).__name__}: {e}'}
     try:
         data = json.loads(body) if body else None
-    except:
+    except Exception:
         data = None
     return {'status': int(code), 'data': data, 'raw': body[:3000]}
 

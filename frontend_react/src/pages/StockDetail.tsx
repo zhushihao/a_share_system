@@ -661,7 +661,7 @@ export default function StockDetail() {
           <IntradayChart
             data={intraday.data}
             height={420}
-            prevClose={quote?.open}
+            prevClose={quote?.pre_close ?? quote?.open}
           />
         ) : viewMode === 'intraday' ? (
           <div className="text-center py-12 text-slate-400">暂无分时数据</div>

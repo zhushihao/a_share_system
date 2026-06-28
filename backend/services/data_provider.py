@@ -444,13 +444,13 @@ class DataProviderService:
         df = df[df["date"].notna()].sort_values("date").reset_index(drop=True)
         
         if period == "weekly":
-            df["_period"] = df["date"].dt.to_period("W").apply(lambda r: r.start_time)
+            df["_period"] = df.groupby(df["date"].dt.to_period("W"))["date"].transform("last")
         elif period == "monthly":
-            df["_period"] = df["date"].dt.to_period("M").apply(lambda r: r.start_time)
+            df["_period"] = df.groupby(df["date"].dt.to_period("M"))["date"].transform("last")
         elif period == "quarterly":
-            df["_period"] = df["date"].dt.to_period("Q").apply(lambda r: r.start_time)
+            df["_period"] = df.groupby(df["date"].dt.to_period("Q"))["date"].transform("last")
         elif period == "yearly":
-            df["_period"] = df["date"].dt.to_period("Y").apply(lambda r: r.start_time)
+            df["_period"] = df.groupby(df["date"].dt.to_period("Y"))["date"].transform("last")
         elif period in ("5m", "15m", "30m", "60m"):
             # 分钟级聚合：基于1分钟数据，按指定间隔聚合
             minutes = int(period.replace("m", ""))

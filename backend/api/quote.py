@@ -921,8 +921,8 @@ async def get_orderbook(symbol: str):
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
         "price": 0,
-        "bids": [{"level": i, "price": 0, "volume": 0} for i in range(1, 6)],
-        "asks": [{"level": i, "price": 0, "volume": 0} for i in range(1, 6)],
+        "bids": [],
+        "asks": [],
         "source": "unavailable",
         "note": "实时五档暂不可用",
     }
