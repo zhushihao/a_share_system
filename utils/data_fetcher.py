@@ -447,7 +447,7 @@ def em_fetch_sector_list() -> pd.DataFrame:
                 "sector_code": item.get("f12", ""),
                 "sector_name": _clean_em_text(item.get("f14", "")),
                 "close": item.get("f2", 0) / 100 if item.get("f2") else 0,
-                "change_pct": item.get("f3", 0) / 100 if item.get("f3") else 0,
+                "change_pct": item.get("f3", 0) if item.get("f3") else 0,
                 "volume": item.get("f5", 0),
                 "amount": item.get("f6", 0) / 10000 if item.get("f6") else 0,
                 "pct_20d": item.get("f24", 0) / 100 if item.get("f24") else 0,

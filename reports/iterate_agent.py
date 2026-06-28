@@ -51,9 +51,16 @@ def _discover_rules() -> List[Rule]:
 
 
 def _sort_rules(rules: List[Rule]) -> List[Rule]:
-    """backend_restart 优先，其余按风险等级 low -> medium -> high"""
+    """backend_restart 优先；其余按 priority 升序，再按风险等级 low -> medium -> high"""
     order = {"low": 0, "medium": 1, "high": 2}
-    return sorted(rules, key=lambda r: (0 if r.name == "backend_restart" else 1, order.get(r.risk, 99)))
+    return sorted(
+        rules,
+        key=lambda r: (
+            0 if r.name == "backend_restart" else 1,
+            r.priority,
+            order.get(r.risk, 99),
+        ),
+    )
 
 
 def parse_report(report_path: Path) -> Dict[str, List[str]]:
@@ -225,6 +232,7 @@ def _find_latest_report(report_dirs: List[Path]) -> Optional[Tuple[Path, datetim
         (r"SELF_CHECK_REPORT_(\d{8})_EXECUTED\.md", "%Y%m%d"),
         (r"REVIEW_COMPREHENSIVE_(\d{4}-\d{2}-\d{2})\.md", "%Y-%m-%d"),
         (r"TDX_GAP_REPORT_(\d{8})\.md", "%Y%m%d"),
+        (r"UX_CHECK_REPORT_(\d{4}-\d{2}-\d{2}_\d{4})\.md", "%Y-%m-%d_%H%M"),
     ]
 
     candidates: List[Tuple[Path, datetime]] = []
@@ -255,25 +263,39 @@ def run_iteration(report_path: Optional[Path] = None) -> Path:
 
     rules = _sort_rules(_discover_rules())
 
-    # 解析报告：自动使用 reports/ 及其子目录下最新的检查报告（支持外部生成）
+    # 支持传入单个报告或报告列表
+    report_paths: List[Path] = []
+    if isinstance(report_path, list):
+        report_paths = [p for p in report_path if isinstance(p, Path)]
+    elif isinstance(report_path, Path):
+        report_paths = [report_path]
+
+    # 自动发现 reports/selfcheck/、reports/ux/ 等子目录下的最新检查报告
     report_dirs = [
         PROJECT_ROOT / "reports",
         PROJECT_ROOT / "reports" / "selfcheck",
+        PROJECT_ROOT / "reports" / "ux",
     ]
     latest = _find_latest_report(report_dirs)
-    if latest is not None:
-        latest_path, latest_time = latest
-        if report_path is None or latest_path != report_path:
-            print(f"[INFO] 基于最新检查报告迭代：{latest_path.name}")
-        report_path = latest_path
-    elif report_path is not None and report_path.exists():
-        print(f"[INFO] 基于传入报告迭代：{report_path.name}")
-    else:
-        print(f"[WARN] 未找到可用的检查报告")
 
-    parsed = {"all": []}
-    if report_path and report_path.exists():
-        parsed = parse_report(report_path)
+    if report_paths:
+        print(f"[INFO] 基于传入报告迭代：{[p.name for p in report_paths]}")
+        # 同时把目录中最新的报告也纳入，避免遗漏 UX 等并发生成的报告
+        if latest is not None and latest[0] not in report_paths:
+            report_paths.append(latest[0])
+            print(f"[INFO] 同时纳入最新检查报告：{latest[0].name}")
+    elif latest is not None:
+        report_paths = [latest[0]]
+        print(f"[INFO] 基于最新检查报告迭代：{latest[0].name}")
+    else:
+        print("[WARN] 未找到可用的检查报告")
+
+    parsed: Dict[str, List[str]] = {"issues": [], "suggestions": [], "critical": [], "important": [], "all": []}
+    for rp in report_paths:
+        if rp.exists():
+            p = parse_report(rp)
+            for key in parsed:
+                parsed[key].extend(p.get(key, []))
 
     matched_names = _match_rules(rules, parsed["all"])
     print(f"[INFO] 匹配到的规则: {matched_names}")
@@ -427,7 +449,7 @@ def run_iteration(report_path: Optional[Path] = None) -> Path:
     lines = [
         f"=== 自主迭代报告 ===",
         f"时间：{now.isoformat()}",
-        f"基于报告：{report_path.name if report_path else '无'}",
+        f"基于报告：{', '.join(p.name for p in report_paths) if report_paths else '无'}",
         "",
         "## 执行结果",
         "",

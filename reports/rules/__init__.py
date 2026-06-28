@@ -27,6 +27,7 @@ class Rule(ABC):
     description: str = ""
     keywords: List[str] = []
     risk: str = "low"  # low / medium / high
+    priority: int = 99  # 越小越优先执行；P0=0, P1=1, P2=2
 
     def __init__(self):
         self._backups: List[Tuple[str, Path]] = []
