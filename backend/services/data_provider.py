@@ -400,7 +400,7 @@ class DataProviderService:
     def _detect_filled_ohlcv(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         检测非交易日复制填充。
-        若最后一条数据的日期为周末，且 OHLC 与前一条完全相同，则标记 is_filled=True。
+        若某条数据的日期为周末，且 OHLC 与前一条完全相同，则标记 is_filled=True。
         """
         if df is None or len(df) < 2:
             if df is not None:
@@ -408,23 +408,23 @@ class DataProviderService:
             return df
         df = df.copy()
         df["is_filled"] = False
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
-        try:
-            last_date = str(int(last.get("date", "")))
-            if len(last_date) == 8:
-                dt = datetime.strptime(last_date, "%Y%m%d")
-                if dt.weekday() >= 5:  # 周六/周日
-                    ohlc_same = (
-                        abs(float(last.get("open", 0)) - float(prev.get("open", 0))) < 1e-6
-                        and abs(float(last.get("high", 0)) - float(prev.get("high", 0))) < 1e-6
-                        and abs(float(last.get("low", 0)) - float(prev.get("low", 0))) < 1e-6
-                        and abs(float(last.get("close", 0)) - float(prev.get("close", 0))) < 1e-6
-                    )
-                    if ohlc_same:
-                        df.at[df.index[-1], "is_filled"] = True
-        except Exception:
-            pass
+        price_cols = ["open", "high", "low", "close"]
+        for i in range(1, len(df)):
+            try:
+                last = df.iloc[i]
+                prev = df.iloc[i - 1]
+                last_date = str(int(last.get("date", "")))
+                if len(last_date) == 8:
+                    dt = datetime.strptime(last_date, "%Y%m%d")
+                    if dt.weekday() >= 5:  # 周六/周日
+                        ohlc_same = all(
+                            abs(float(last.get(col, 0)) - float(prev.get(col, 0))) < 1e-6
+                            for col in price_cols
+                        )
+                        if ohlc_same:
+                            df.at[df.index[i], "is_filled"] = True
+            except Exception:
+                continue
         return df
     def _aggregate_period(self, df: pd.DataFrame, period: str) -> pd.DataFrame:
         """
