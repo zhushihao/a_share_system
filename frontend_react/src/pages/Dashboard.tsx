@@ -4,6 +4,14 @@ import { TrendingUp, TrendingDown, Activity, Zap, Database, CheckCircle, AlertTr
 import { fetchQuotesBatch, fetchMarketSentiment, fetchMarketHotspots, fetchDataHealth, fetchMarketOverview } from '@/api/client'
 import type { StandardQuote } from '@/types'
 
+function formatVolume(value: number | undefined | null): string {
+  if (value === undefined || value === null || Number.isNaN(value)) return '-'
+  const n = Number(value)
+  if (n >= 100000000) return `${(n / 100000000).toFixed(2)}亿`
+  if (n >= 10000) return `${(n / 10000).toFixed(1)}万`
+  return n.toLocaleString()
+}
+
 const INDEX_SYMBOLS = [
   { symbol: 'sh000001', name: '上证指数' },
   { symbol: 'sz399001', name: '深证成指' },
@@ -40,7 +48,7 @@ function IndexCard({ name, close, change, changePct, volume, date }: {
         {changePct.toFixed(2)}%)
       </div>
       <div className="text-xs text-slate-400 mt-2">
-        量: {(volume / 10000).toFixed(1)}万 · {date}
+        量: {formatVolume(volume)} · {date}
       </div>
     </div>
   )

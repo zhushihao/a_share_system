@@ -21,6 +21,14 @@ import IndicatorPanel from '@/components/IndicatorPanel'
 import { fetchSignal, fetchResonance } from '@/api/client'
 import type { StandardQuote, OHLCVRecord, TechIndicators, PatternData, VolumeNodeData, SupportResistanceData, TradingSignal, ResonanceData } from '@/types'
 
+function formatVolume(value: number | undefined | null): string {
+  if (value === undefined || value === null || Number.isNaN(value)) return '-'
+  const n = Number(value)
+  if (n >= 100000000) return `${(n / 100000000).toFixed(2)}亿`
+  if (n >= 10000) return `${(n / 10000).toFixed(1)}万`
+  return n.toLocaleString()
+}
+
 export default function StockDetail() {
   const { symbol } = useParams<{ symbol: string }>()
   const [quote, setQuote] = useState<StandardQuote | null>(null)
@@ -212,7 +220,7 @@ export default function StockDetail() {
             </div>
             <div>
               <div className="text-xs text-slate-400">成交量</div>
-              <div className="text-sm font-medium">{(quote.volume / 10000).toFixed(1)}万</div>
+              <div className="text-sm font-medium">{formatVolume(quote.volume)}</div>
             </div>
           </div>
 
@@ -488,31 +496,31 @@ export default function StockDetail() {
           <div className="space-y-2 text-sm">
             {[
               {
-                label: indicatorLabels.ma5 || 'MA5',
+                label: indicatorLabels.ma5 || '5日均线',
                 value: indicators.ma5?.toFixed(2) ?? '-',
               },
               {
-                label: indicatorLabels.ma20 || 'MA20',
+                label: indicatorLabels.ma20 || '20日均线',
                 value: indicators.ma20?.toFixed(2) ?? '-',
               },
               {
-                label: `KDJ(${indicatorLabels.kdj_k || 'K'}/${indicatorLabels.kdj_d || 'D'}/${indicatorLabels.kdj_j || 'J'})`,
+                label: `KDJ(${indicatorLabels.kdj_k || 'K线'}/${indicatorLabels.kdj_d || 'D线'}/${indicatorLabels.kdj_j || 'J线'})`,
                 value: `${indicators.kdj_k?.toFixed(2) ?? '-'}/${indicators.kdj_d?.toFixed(2) ?? '-'}/${indicators.kdj_j?.toFixed(2) ?? '-'}`,
               },
               {
-                label: `MACD(${indicatorLabels.macd_dif?.replace('MACD', '').trim() || 'DIF'}/${indicatorLabels.macd_dea?.replace('MACD', '').trim() || 'DEA'})`,
+                label: `MACD(${indicatorLabels.macd_dif?.replace('MACD', '').trim() || '差离值'}/${indicatorLabels.macd_dea?.replace('MACD', '').trim() || '信号线'})`,
                 value: `${indicators.macd_dif?.toFixed(3) ?? '-'}/${indicators.macd_dea?.toFixed(3) ?? '-'}`,
               },
               {
-                label: indicatorLabels.rsi6 || 'RSI6',
+                label: indicatorLabels.rsi6 || 'RSI(6)',
                 value: indicators.rsi6?.toFixed(2) ?? '-',
               },
               {
-                label: `BOLL(${indicatorLabels.boll_up?.replace('布林', '').trim() || 'UP'}/${indicatorLabels.boll_mid?.replace('布林', '').trim() || 'MID'}/${indicatorLabels.boll_down?.replace('布林', '').trim() || 'DOWN'})`,
+                label: `BOLL(${indicatorLabels.boll_up?.replace('布林', '').trim() || '上轨'}/${indicatorLabels.boll_mid?.replace('布林', '').trim() || '中轨'}/${indicatorLabels.boll_down?.replace('布林', '').trim() || '下轨'})`,
                 value: `${indicators.boll_up?.toFixed(2) ?? '-'}/${indicators.boll_mid?.toFixed(2) ?? '-'}/${indicators.boll_down?.toFixed(2) ?? '-'}`,
               },
               {
-                label: indicatorLabels.obv || 'OBV',
+                label: indicatorLabels.obv || 'OBV能量潮',
                 value: indicators.obv?.toFixed(0) ?? '-',
               },
               {
@@ -792,7 +800,7 @@ export default function StockDetail() {
                       <td className="px-3 py-2 text-right">{row.high.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right">{row.low.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right font-medium">{row.close.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right">{(row.volume / 10000).toFixed(1)}万</td>
+                      <td className="px-3 py-2 text-right">{formatVolume(row.volume)}</td>
                       <td className={`px-3 py-2 text-right ${rowChange >= 0 ? 'text-up' : 'text-down'}`}>
                         {rowChange >= 0 ? '+' : ''}
                         {rowChange.toFixed(2)}%

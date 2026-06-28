@@ -167,7 +167,13 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
     except Exception as e:
         get_obs().log("WARN", f"eastmoney sentiment fallback failed: {type(e).__name__}", "MarketAPI")
 
-    # 3. 彻底不可用
+    # 3. 彻底不可用：如有历史缓存，返回缓存数据避免面板空白
+    if _sentiment_cache is not None and _sentiment_cache.get("source") not in (None, "unavailable"):
+        cached = dict(_sentiment_cache)
+        cached["source"] = "cache"
+        cached["data_date"] = data_date
+        return cached
+
     result = {
         "up_down_ratio": None,
         "limit_up": None,
