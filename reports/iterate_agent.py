@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from collections.abc import Sequence as SequenceABC
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -263,9 +264,9 @@ def run_iteration(report_path: Optional[Path | Sequence[Path]] = None) -> Path:
 
     rules = _sort_rules(_discover_rules())
 
-    # 支持传入单个报告或报告列表
+    # 支持传入单个报告或报告序列（list/tuple 等）
     report_paths: List[Path] = []
-    if isinstance(report_path, list):
+    if isinstance(report_path, SequenceABC) and not isinstance(report_path, (str, bytes)):
         report_paths = [p for p in report_path if isinstance(p, Path)]
     elif isinstance(report_path, Path):
         report_paths = [report_path]
