@@ -142,8 +142,8 @@ async def health_check():
 
     # 数据源健康
     try:
-        from backend.services.data_provider import DataProviderService
-        provider = DataProviderService(tdxdir=settings.TDX_DIR)
+        from backend.services.data_provider import get_data_provider_service
+        provider = get_data_provider_service()
         checks["data_sources"] = provider.health_check()
     except Exception as e:
         checks["data_sources"] = {"error": str(e)}

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 
 import aiosqlite
+import pandas as pd
 from backend.models.database import (
     DATABASE_PATH,
     init_db,
@@ -34,17 +35,19 @@ def _offline_quote_to_dict(provider: DataProviderService, symbol: str, name: Opt
         df = provider.fetch_ohlcv(symbol, period="daily", adjust="qfq")
         if df is not None and len(df) > 0:
             latest = df.iloc[-1]
+            pre_close = round(float(df.iloc[-2]["close"]), 2) if len(df) >= 2 else round(float(latest["close"]), 2)
             return {
                 "symbol": symbol,
                 "name": name,
                 "timestamp": datetime.now().isoformat(),
-                "open": float(latest["open"]),
-                "high": float(latest["high"]),
-                "low": float(latest["low"]),
-                "close": float(latest["close"]),
+                "open": round(float(latest["open"]), 2),
+                "high": round(float(latest["high"]), 2),
+                "low": round(float(latest["low"]), 2),
+                "close": round(float(latest["close"]), 2),
                 "volume": int(latest["volume"]),
-                "amount": float(latest.get("amount", 0)) if "amount" in latest else None,
-                "source": "mootdx-offline",
+                "amount": round(float(latest.get("amount", 0)), 2) if "amount" in latest and pd.notna(latest.get("amount")) else None,
+                "pre_close": pre_close,
+                "source": "mootdx",
                 "freq": "1d",
             }
     except Exception:

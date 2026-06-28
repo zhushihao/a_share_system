@@ -58,8 +58,34 @@ config/user.yaml
 backend/quant_workbench.db
 output/
 reports/selfcheck/
+reports/selfcheck/api_raw_results.json
 reports/ux/
 system_check_raw.*
 
 # GitHub Actions self-hosted runner (local installation)
 actions-runner/
+
+# Temporary API test output files
+api_check_results.json
+backtest_strategies.json
+health.json
+indicators.json
+indicators_test.json
+market_hotspots.json
+market_overview.json
+market_overview_test.json
+market_sectors.json
+market_sentiment.json
+ohlcv.json
+patterns.json
+patterns_test.json
+resonance.json
+search.json
+signal.json
+signals.json
+stock_list.json
+stock_list_test.json
+support_resistance.json
+volume_analysis.json
+watchlist.json
+watchlist_test.json

@@ -108,7 +108,7 @@ function MarketSentiment({ data, loading }: { data: any; loading: boolean }) {
             <span className="text-up font-medium">{limitUp !== undefined && limitUp !== null ? limitUp : '--'}</span>
           </div>
           <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full bg-up rounded-full" style={{ width: limitUp ? `${Math.min(limitUp / 100 * 100, 100)}%` : '0%' }} />
+            <div className="h-full bg-up rounded-full" style={{ width: limitUp ? `${Math.min(limitUp, 100)}%` : '0%' }} />
           </div>
         </div>
         <div>
@@ -223,6 +223,7 @@ function DataHealthPanel({ data, loading }: { data: any; loading: boolean }) {
 
   const health = data.health || {}
   const status = data.status || 'unknown'
+  const qualityIssues = data.quality_issues || []
   const items = [
     { label: '离线数据', ok: health.offline_available, icon: CheckCircle },
     { label: '实时数据', ok: health.realtime_available, icon: CheckCircle },
@@ -237,9 +238,9 @@ function DataHealthPanel({ data, loading }: { data: any; loading: boolean }) {
           <h3 className="font-semibold text-slate-700">数据健康</h3>
         </div>
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-          status === 'ok' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+          status === 'ok' ? 'bg-emerald-50 text-emerald-600' : status === 'warning' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'
         }`}>
-          {status === 'ok' ? '正常' : '异常'}
+          {status === 'ok' ? '正常' : status === 'warning' ? '告警' : '异常'}
         </span>
       </div>
       <div className="space-y-2">
@@ -259,6 +260,16 @@ function DataHealthPanel({ data, loading }: { data: any; loading: boolean }) {
           </div>
         ))}
       </div>
+      {qualityIssues.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-slate-100">
+          <div className="text-xs text-amber-600 font-medium mb-1">数据中台自检告警</div>
+          <ul className="space-y-1">
+            {qualityIssues.map((issue: string, idx: number) => (
+              <li key={idx} className="text-xs text-slate-500">• {issue}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="mt-3 pt-3 border-t border-slate-100">
         <Link to="/data" className="text-xs text-sky-600 hover:text-sky-700 font-medium">
           查看详细数据 →

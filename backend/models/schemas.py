@@ -17,6 +17,7 @@ class StandardQuote(BaseModel):
     close: float
     volume: int
     amount: Optional[float] = None
+    pre_close: Optional[float] = None
     source: Literal["mootdx", "yahoo", "ifind", "hybrid"] = "mootdx"
     adj_factor: Optional[float] = None
     freq: Literal["1d", "1m", "5m", "15m", "30m", "60m", "tick"] = "1d"

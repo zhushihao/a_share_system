@@ -260,8 +260,11 @@ class OfflineDataProvider:
         stocks = []
         vipdoc_dir = os.path.join(self.tdxdir, "vipdoc")
         
-        # 优先从 TDX 的 infoharbor_ex.code 读取代码→名称映射（本地、快速、准确）
-        name_map = self._load_stock_names_from_infoharbor()
+        # 优先从 TDX 的 shs.tnf / szs.tnf / bjs.tnf 读取代码→名称映射（覆盖指数、B股等 infoharbor 缺失的代码）
+        name_map = self._load_stock_names_from_tnf()
+        
+        # infoharbor_ex.code 对普通股票名称更准确，用来覆盖 TNF 中的 XD/XR 前缀临时名称
+        name_map.update(self._load_stock_names_from_infoharbor())
         
         # 兜底：base.dbf 或东方财富在线接口
         if not name_map:
@@ -315,6 +318,47 @@ class OfflineDataProvider:
         
         return name_map
     
+    def _load_stock_names_from_tnf(self) -> Dict[str, str]:
+        """从 TDX shs.tnf / szs.tnf / bjs.tnf 读取代码→名称映射
+
+        通达信的 tnf 文件是定长二进制文件，每条记录 300 字节，
+        不同市场/板块的记录在文件中有多个起始偏移（0/60/120/180/240）。
+        该方法遍历所有可能偏移，提取 code（0-8 字节）和 name（31-48 字节，GBK）。
+        """
+        name_map = {}
+        tnf_files = [
+            ("sh", "shs.tnf"),
+            ("sz", "szs.tnf"),
+            ("bj", "bjs.tnf"),
+        ]
+
+        for market, filename in tnf_files:
+            tnf_path = os.path.join(self.tdxdir, "T0002", "hq_cache", filename)
+            if not os.path.exists(tnf_path):
+                continue
+            try:
+                with open(tnf_path, "rb") as f:
+                    # 文件头 50 字节
+                    f.seek(50)
+                    data = f.read()
+                record_size = 300
+                for base in range(0, record_size, 60):
+                    record_count = (len(data) - base) // record_size
+                    for i in range(record_count):
+                        offset = base + i * record_size
+                        rec = data[offset:offset + record_size]
+                        if len(rec) < record_size:
+                            break
+                        code = rec[0:9].split(b"\x00")[0].decode("ascii", errors="ignore").strip()
+                        name = rec[31:49].split(b"\x00")[0].decode("gbk", errors="ignore").strip()
+                        if code.isdigit() and len(code) == 6 and name:
+                            name_map[code] = name
+            except Exception as e:
+                if self._obs:
+                    self._obs.log("WARN", f"{filename} parse failed: {e}", "OfflineDataProvider")
+
+        return name_map
+
     def _load_stock_names_from_base_dbf(self) -> Dict[str, str]:
         """从 TDX base.dbf 读取股票名称映射（不依赖 dbfread）"""
         name_map = {}
@@ -676,9 +720,10 @@ class RealtimeDataProvider:
                 return None
             
             duration = (time.time() - start_time) * 1000
-            self._obs.log("INFO", f"Realtime quotes fetched: {len(codes)} codes ({duration:.1f}ms)", 
+            self._stats["realtime_hits"] += 1
+            self._obs.log("INFO", f"Realtime quotes fetched: {len(codes)} codes ({duration:.1f}ms)",
                           "RealtimeDataProvider")
-            
+
             return df
             
         except Exception as e:
@@ -918,14 +963,17 @@ class MootdxDataProvider:
     def fetch_realtime_quote(self, codes: List[str]) -> Optional[pd.DataFrame]:
         """
         获取实时行情（只能通过实时层）
-        
+
         Args:
             codes: 股票代码列表
-        
+
         Returns:
             DataFrame 实时行情数据
         """
-        return self._realtime.fetch_realtime_quote(codes)
+        result = self._realtime.fetch_realtime_quote(codes)
+        if result is not None and len(result) > 0:
+            self._stats["realtime_hits"] += 1
+        return result
     
     # ────────────────────────────────────────────────────────
     # 股票列表

@@ -15,6 +15,7 @@ Signals API - 信号中心接口
 """
 
 from datetime import datetime, timedelta
+import logging
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
@@ -43,6 +44,30 @@ from backend.services.signal_engine import (
 )
 
 router = APIRouter()
+
+
+# 信号类型 / 策略中文映射
+SIGNAL_TYPE_LABELS = {
+    "BUY": "买入",
+    "SELL": "卖出",
+    "WATCH": "关注",
+    "ALERT": "预警",
+    "HOLD": "观望",
+}
+
+STRATEGY_LABELS = {
+    "ma_golden_cross": "均线金叉",
+    "ma_death_cross": "均线死叉",
+    "vol_price_breakout": "放量突破",
+    "vol_price_collapse": "放量下跌",
+    "cai_sen_w_bottom": "蔡森 W 底",
+    "cai_sen_head_shoulder": "蔡森头肩底",
+    "bai_da_right_side": "右侧买入",
+    "signal_composer": "多因子合成",
+    "vwap_break": "突破均价",
+    "vol_surge_stagnation": "放量滞涨",
+    "opening_eight": "开盘八法",
+}
 
 
 # ───────────────────────────────────────────────
@@ -83,18 +108,22 @@ def _get_engine() -> SignalEngine:
 
 def _signal_result_to_dict(s: SignalResult) -> Dict[str, Any]:
     """将 SignalResult 转换为字典"""
+    st = s.signal_type.value
+    stg = s.strategy.value
     return {
         "symbol": s.symbol,
         "name": s.name,
         "timestamp": s.timestamp.isoformat() if isinstance(s.timestamp, datetime) else str(s.timestamp),
-        "signal_type": s.signal_type.value,
-        "strategy": s.strategy.value,
+        "signal_type": st,
+        "signal_type_label": SIGNAL_TYPE_LABELS.get(st, st),
+        "strategy": stg,
+        "strategy_label": STRATEGY_LABELS.get(stg, stg),
         "category": s.category.value,
         "description": s.description,
-        "confidence": s.confidence,
-        "price": s.price,
-        "target_price": s.target_price,
-        "stop_loss": s.stop_loss,
+        "confidence": round(s.confidence, 2) if s.confidence is not None else None,
+        "price": round(s.price, 2) if s.price is not None else None,
+        "target_price": round(s.target_price, 2) if s.target_price is not None else None,
+        "stop_loss": round(s.stop_loss, 2) if s.stop_loss is not None else None,
         "extra_data": s.extra_data,
     }
 
@@ -138,6 +167,37 @@ async def list_signals(
         for item in items:
             item['category'] = strategy_to_category.get(item.get('strategy', ''), 'daily')
         
+        # 从 stock-list 补充缺失的中文名称，并附加中文标签
+        name_map = {}
+        try:
+            stock_df = _get_data_provider().fetch_stock_list()
+            if stock_df is not None and len(stock_df) > 0 and "code" in stock_df.columns and "name" in stock_df.columns:
+                for _, row in stock_df.iterrows():
+                    code = str(row.get("code", "")).zfill(6)
+                    name = str(row.get("name", "")).strip()
+                    if code and name and name != code:
+                        name_map[code] = name
+        except Exception as e:
+            logger = logging.getLogger("signals")
+            logger.warning(f"从 stock-list 补充名称失败: {type(e).__name__}: {e}")
+
+        for item in items:
+            symbol = str(item.get("symbol", "")).zfill(6)
+            name = item.get("name", "")
+            if not name or name == symbol:
+                item["name"] = name_map.get(symbol, symbol)
+
+            st = item.get("signal_type", "")
+            item["signal_type_label"] = SIGNAL_TYPE_LABELS.get(st, st)
+            stg = item.get("strategy", "")
+            item["strategy_label"] = STRATEGY_LABELS.get(stg, stg)
+
+            # 价格字段保留两位小数，消除浮点精度溢出
+            for key in ("price", "target_price", "stop_loss"):
+                val = item.get(key)
+                if val is not None and isinstance(val, (int, float)):
+                    item[key] = round(float(val), 2)
+
         return {
             "count": len(items),
             "limit": limit,

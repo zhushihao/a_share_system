@@ -515,6 +515,7 @@ def detect_triangle(
         confidence = min(1.0, max(0.3, 0.5 + (0.5 - range_ratio)))
     confidence = round(confidence, 3)
     
+    subtype_cn = {"convergent": "收敛", "ascending": "上升", "descending": "下降"}.get(subtype, subtype)
     results.append({
         "type": "triangle",
         "subtype": subtype,
@@ -524,8 +525,7 @@ def detect_triangle(
         "lower_bound": round(float(lower), 3),
         "confidence": confidence,
         "description": (
-            f"{subtype}三角形：上边界 {upper:.2f}，下边界 {lower:.2f}，"
-            f"等待突破方向"
+            f"{subtype_cn}三角形：上边界 {upper:.2f}，下边界 {lower:.2f}，等待突破方向"
         ),
     })
     

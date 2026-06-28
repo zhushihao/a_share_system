@@ -9,6 +9,7 @@ export interface StandardQuote {
   close: number
   volume: number
   amount?: number
+  pre_close?: number
   source: string
   freq: string
 }
@@ -47,6 +48,7 @@ export interface PatternData {
   start_date: string
   end_date: string
   description: string
+  position?: 'top' | 'bottom' | 'breakout'
 }
 
 export interface VolumeNodeData {

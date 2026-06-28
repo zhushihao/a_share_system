@@ -583,7 +583,7 @@ function SignalRow({
           <p className="text-sm text-slate-600">{signal.description}</p>
           <div className="flex items-center gap-4 mt-2">
             <ConfidenceBar value={signal.confidence} />
-            <span className="text-xs text-slate-500">{signal.strategy}</span>
+            <span className="text-xs text-slate-500">{signal.strategy_label || signal.strategy}</span>
             {signal.price > 0 && (
               <span className="text-xs text-slate-500">价格: {signal.price.toFixed(2)}</span>
             )}

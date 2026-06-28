@@ -67,7 +67,7 @@ HIGH_LIMIT_PREFIXES = ("688", "300", "301", "689", "430", "83", "87", "88", "82"
 PRICE_TOL = 0.02
 
 # 缓存 key 版本：当复权等核心计算逻辑变更时升级，让旧缓存自然失效
-CACHE_KEY_VERSION = "v2"
+CACHE_KEY_VERSION = "v3"
 
 
 # ─────────────────────────────────────────
@@ -781,16 +781,18 @@ class DataPlatformService:
                     name = self._provider._get_stock_name_map().get(symbol.zfill(6))
                 except Exception:
                     pass
+                pre_close = round(float(df.iloc[-2]["close"]), 2) if len(df) >= 2 else round(float(latest["close"]), 2)
                 quote = StandardQuote(
                     symbol=symbol,
                     name=name,
                     timestamp=datetime.now(),
-                    open=float(latest["open"]),
-                    high=float(latest["high"]),
-                    low=float(latest["low"]),
-                    close=float(latest["close"]),
+                    open=round(float(latest["open"]), 2),
+                    high=round(float(latest["high"]), 2),
+                    low=round(float(latest["low"]), 2),
+                    close=round(float(latest["close"]), 2),
                     volume=int(latest["volume"]),
-                    amount=float(latest.get("amount", 0)) if "amount" in latest else None,
+                    amount=round(float(latest.get("amount", 0)), 2) if "amount" in latest and pd.notna(latest.get("amount")) else None,
+                    pre_close=pre_close,
                     source="mootdx",
                     freq="1d",
                 )
@@ -798,7 +800,7 @@ class DataPlatformService:
             except Exception as e:
                 self._obs.log(
                     "WARN",
-                    f"Quote fallback failed for {symbol}: {e}",
+                    f"Quote fallback failed for {symbol}: {type(e).__name__}",
                     "DataPlatformService",
                 )
 

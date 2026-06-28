@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Quant Workbench 每小时自检循环
+Quant Workbench 每小时自主迭代循环
 
-1. 检查后端进程与端口
-2. 调用核心 API 验证可用性与数据质量
-3. 生成 Markdown 自检报告到 reports/selfcheck/
-4. 触发 iterate_agent.py 执行自主迭代
+1. 自动确保 Windows 定时任务已注册
+2. 读取 reports/selfcheck/ 下最新的系统自检报告
+3. 同时识别 reports/ux/ 下最新的 UX 检查报告
+4. 触发 iterate_agent.py 按 P0/P1/P2 优先级执行自主迭代
+
+注：本脚本不再生成新的自检报告，只消费已有报告。
 """
 
 import json
@@ -23,7 +25,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from reports.iterate_agent import run_iteration
+from reports.iterate_agent import run_iteration, _find_latest_report
 
 BASE_URL = "http://127.0.0.1:5889"
 REPORT_DIR = PROJECT_ROOT / "reports" / "selfcheck"
@@ -346,24 +348,44 @@ def _install_scheduler() -> bool:
 
 def main():
     if not _acquire_lock():
-        print("[INFO] 上一轮自检尚未结束，本次跳过")
+        print("[INFO] 上一轮迭代尚未结束，本次跳过")
         return
 
     try:
-        print(f"=== 系统自检循环开始 ({datetime.now().isoformat()}) ===")
+        print(f"=== 自主迭代循环开始 ({datetime.now().isoformat()}) ===")
 
         # 每次启动时自动确保定时任务已注册
         if _install_scheduler():
             print("[INFO] 定时任务已确认注册")
         else:
-            print("[WARN] 定时任务注册失败，将依赖本次进程/看门狗继续自检")
+            print("[WARN] 定时任务注册失败，将依赖本次进程/看门狗继续迭代")
 
-        summary = _run_selfcheck()
-        report_path = _write_report(summary)
-        print(f"[INFO] 自检报告已保存: {report_path}")
+        # 只读取已有检查报告，不重新生成
+        system_report_dirs = [PROJECT_ROOT / "reports" / "selfcheck"]
+        system_latest = _find_latest_report(system_report_dirs)
+        reports_to_iterate: List[Path] = []
+        if system_latest is not None:
+            reports_to_iterate.append(system_latest[0])
+            print(f"[INFO] 识别到系统自检报告: {system_latest[0].name}")
+        else:
+            print("[WARN] 未找到系统自检报告")
+
+        # 同时识别 reports/ux/ 下的最新 UX 检查报告
+        ux_report_dirs = [PROJECT_ROOT / "reports" / "ux"]
+        ux_latest = _find_latest_report(ux_report_dirs)
+        if ux_latest is not None:
+            ux_path, ux_time = ux_latest
+            reports_to_iterate.append(ux_path)
+            print(f"[INFO] 识别到 UX 报告: {ux_path.name}")
+        else:
+            print("[INFO] 未找到 UX 报告")
+
+        if not reports_to_iterate:
+            print("[WARN] 未找到任何可用的检查报告，跳过本次迭代")
+            return
 
         print("[INFO] 触发自主迭代代理...")
-        iteration_path = run_iteration(report_path)
+        iteration_path = run_iteration(reports_to_iterate)
         print(f"[INFO] 迭代报告: {iteration_path}")
     finally:
         _release_lock()
