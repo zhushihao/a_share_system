@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import asyncio
 
 import aiosqlite
+import pandas as pd
 from backend.models.database import (
     DATABASE_PATH,
     init_db,
@@ -44,7 +45,7 @@ def _offline_quote_to_dict(provider: DataProviderService, symbol: str, name: Opt
                 "low": round(float(latest["low"]), 2),
                 "close": round(float(latest["close"]), 2),
                 "volume": int(latest["volume"]),
-                "amount": round(float(latest.get("amount", 0)), 2) if "amount" in latest else None,
+                "amount": round(float(latest.get("amount", 0)), 2) if "amount" in latest and pd.notna(latest.get("amount")) else None,
                 "pre_close": pre_close,
                 "source": "mootdx",
                 "freq": "1d",

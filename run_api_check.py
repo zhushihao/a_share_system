@@ -59,8 +59,7 @@ for i in wl[:5]:
     q = i.get("quote", {}) or {}
     name = i.get("name")
     qname = q.get("name")
-    if qname is None:
-        null_name_count += 1
+    # 预览循环仅用于日志展示，不计入最终统计
     print(f"  symbol={i.get('symbol')} name={name} quote.name={qname}")
 for i in wl:
     q = i.get("quote", {}) or {}

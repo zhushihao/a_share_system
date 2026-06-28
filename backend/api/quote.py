@@ -322,7 +322,7 @@ async def get_realtime_quote(symbol: str):
                 "low": round(float(latest.get("low", 0)), 2),
                 "close": round(float(latest.get("close", 0)), 2),
                 "volume": int(latest.get("volume", 0)),
-                "amount": round(float(latest.get("amount", 0)), 2) if "amount" in latest else None,
+                "amount": round(float(latest.get("amount", 0)), 2) if "amount" in latest and pd.notna(latest.get("amount")) else None,
                 "pre_close": pre_close,
                 "source": "mootdx",
                 "freq": "1d",

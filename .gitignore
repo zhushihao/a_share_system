@@ -58,6 +58,7 @@ config/user.yaml
 backend/quant_workbench.db
 output/
 reports/selfcheck/
+reports/selfcheck/api_raw_results.json
 reports/ux/
 system_check_raw.*
 

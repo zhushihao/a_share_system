@@ -390,7 +390,7 @@ class DataProviderService:
 
         # 检测并剔除非交易日填充数据
         df = self._detect_filled_ohlcv(df)
-        df = df[df["is_filled"] != True].reset_index(drop=True)
+        df = df[~df["is_filled"].fillna(False)].reset_index(drop=True)
         if len(df) == 0:
             return df
 
@@ -603,7 +603,7 @@ class DataProviderService:
                                 low=round(float(row.get('low', price)), 2),
                                 close=round(price, 2),
                                 volume=int(row.get('volume', row.get('vol', 0))),
-                                amount=round(float(row.get('amount', 0)), 2) or None,
+                                amount=round(float(row.get('amount', 0)), 2) if pd.notna(row.get('amount')) else None,
                                 pre_close=round(float(row.get('pre_close', price)), 2),
                                 source='mootdx',
                                 freq='1d',
@@ -624,7 +624,7 @@ class DataProviderService:
                         low=round(float(latest['low']), 2),
                         close=round(float(latest['close']), 2),
                         volume=int(latest['volume']),
-                        amount=round(float(latest.get('amount', 0)), 2) if 'amount' in latest else None,
+                        amount=round(float(latest.get('amount', 0)), 2) if 'amount' in latest and pd.notna(latest.get('amount')) else None,
                         pre_close=pre_close,
                         source='mootdx',
                         freq='1d',
@@ -671,7 +671,7 @@ class DataProviderService:
                                     low=round(float(latest['low']), 2),
                                     close=round(float(latest['close']), 2),
                                     volume=int(latest['volume']),
-                                    amount=round(float(latest.get('amount', 0)), 2) if 'amount' in latest else None,
+                                    amount=round(float(latest.get('amount', 0)), 2) if 'amount' in latest and pd.notna(latest.get('amount')) else None,
                                     pre_close=pre_close,
                                     source='mootdx',
                                     freq='1d',
@@ -718,7 +718,8 @@ class DataProviderService:
             low = round(float(row.get("low", close)), 2)
             close = round(close, 2)
             volume = int(row.get("volume", row.get("vol", 0)))
-            amount = round(float(row.get("amount", row.get("amt", 0))), 2) or None
+            amount_val = row.get("amount", row.get("amt", 0))
+            amount = round(float(amount_val), 2) if pd.notna(amount_val) else None
             pre_close = round(float(row.get("pre_close", row.get("prev_close", close))), 2)
 
             # 时间戳

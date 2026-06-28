@@ -298,8 +298,12 @@ export default function Watchlist() {
         valB = b.quote?.close || 0
         break
       case 'changePct':
-        valA = a.quote ? ((a.quote.close - a.quote.open) / a.quote.open) * 100 : 0
-        valB = b.quote ? ((b.quote.close - b.quote.open) / b.quote.open) * 100 : 0
+        valA = a.quote
+          ? ((a.quote.close - (a.quote.pre_close ?? a.quote.open)) / (a.quote.pre_close ?? a.quote.open)) * 100
+          : 0
+        valB = b.quote
+          ? ((b.quote.close - (b.quote.pre_close ?? b.quote.open)) / (b.quote.pre_close ?? b.quote.open)) * 100
+          : 0
         break
       case 'score':
         valA = a.score || 0

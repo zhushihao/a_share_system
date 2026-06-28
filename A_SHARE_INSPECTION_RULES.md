@@ -15,7 +15,8 @@
 ### 1.2 数据时效性判断标准
 - 今天是 **交易日** → 期望数据到 T-0（当天收盘后）
 - 今天是 **周末** → 最新数据到周五收盘即可，不算延迟
-- 信号扫描 → 通常收盘后 1-2 小时运行，延迟 1-2 天正常
+- 今天是 **节假日** → 最新数据到上一个交易日收盘即可，不算延迟
+- 信号扫描 → 收盘后 1-2 小时运行；若周末/节假日/停跑，延迟 1-2 天正常；交易日仍应按最近交易日评估
 - 定时任务 → 如果 Cron 是每日/每周，按配置判断
 
 ### 1.3 常见误区
@@ -53,11 +54,25 @@
 | Head and Shoulders | 头肩顶 | 形态识别 | 🔴 高 |
 | Double Top | 双顶 | 形态识别 | 🔴 高 |
 | Double Bottom | 双底 | 形态识别 | 🔴 高 |
+| Triple Top | 三重顶 | 形态识别 | 🔴 高 |
+| Triple Bottom | 三重底 | 形态识别 | 🔴 高 |
 | Triangle | 三角形 | 形态识别 | 🔴 高 |
+| Ascending Triangle | 上升三角形 | 形态识别 | 🟠 中 |
+| Descending Triangle | 下降三角形 | 形态识别 | 🟠 中 |
+| Symmetric Triangle | 对称三角形 | 形态识别 | 🟠 中 |
 | Wedge | 楔形 | 形态识别 | 🔴 高 |
+| Rising Wedge | 上升楔形 | 形态识别 | 🟠 中 |
+| Falling Wedge | 下降楔形 | 形态识别 | 🟠 中 |
 | Flag | 旗形 | 形态识别 | 🟠 中 |
 | Pennant | 三角旗形 | 形态识别 | 🟠 中 |
 | Cup and Handle | 杯柄形态 | 形态识别 | 🟠 中 |
+| Rectangle | 矩形整理 | 形态识别 | 🟠 中 |
+| Channel | 通道 | 形态识别 | 🟠 中 |
+| Rounding Bottom | 圆弧底 | 形态识别 | 🟠 中 |
+| Rounding Top | 圆弧顶 | 形态识别 | 🟠 中 |
+| Diamond | 菱形 | 形态识别 | 🟠 中 |
+| Fibonacci Retracement | 斐波那契回调 | 形态识别 | 🟠 中 |
+| V-Reversal | V型反转 | 形态识别 | 🟠 中 |
 | Breakout | 突破 | 信号描述 | 🟠 中 |
 | Reversal | 反转 | 信号描述 | 🟠 中 |
 | Divergence | 背离 | 信号描述 | 🟠 中 |

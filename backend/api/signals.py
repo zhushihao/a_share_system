@@ -176,9 +176,10 @@ async def list_signals(
                     name = str(row.get("name", "")).strip()
                     if code and name and name != code:
                         name_map[code] = name
-        except Exception:
-            pass
-        
+        except Exception as e:
+            logger = logging.getLogger("signals")
+            logger.warning(f"从 stock-list 补充名称失败: {type(e).__name__}: {e}")
+
         for item in items:
             symbol = str(item.get("symbol", "")).zfill(6)
             name = item.get("name", "")

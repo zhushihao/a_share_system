@@ -16,7 +16,7 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # 确保项目根目录在 sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -255,8 +255,8 @@ def _find_latest_report(report_dirs: List[Path]) -> Optional[Tuple[Path, datetim
     return max(candidates, key=lambda x: x[1])
 
 
-def run_iteration(report_path: Optional[Path] = None) -> Path:
-    """执行一次自主迭代；自动使用 reports/selfcheck/ 下最新的检查报告"""
+def run_iteration(report_path: Optional[Path | Sequence[Path]] = None) -> Path:
+    """执行一次自主迭代；可接收单个报告或多份报告，并自动补充最新检查报告"""
     now = datetime.now()
     ts = now.strftime("%Y%m%d_%H%M")
     iteration_report_path = PROJECT_ROOT / "reports" / "selfcheck" / f"ITERATION_REPORT_v2.0_EXECUTED_{ts}.md"

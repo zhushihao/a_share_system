@@ -176,7 +176,7 @@ export default function StockDetail() {
       setIsRefreshing(false)
       setLoading(false)
     }
-  }, [symbol, period, adjustMode])
+  }, [symbol, period, adjustMode, stockNameMap])
 
   // 初始加载
   useEffect(() => {
