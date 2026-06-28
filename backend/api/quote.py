@@ -269,9 +269,15 @@ async def get_realtime_quote(symbol: str):
         df = platform.get_ohlcv(symbol, period="daily", adjust="qfq")
         if df is not None and len(df) > 0:
             latest = df.iloc[-1]
+            # 尝试从本地 stock-list 缓存补充 name
+            name = None
+            try:
+                name = platform._provider._get_stock_name_map().get(symbol.zfill(6))
+            except Exception:
+                pass
             return {
                 "symbol": symbol,
-                "name": None,
+                "name": name,
                 "timestamp": datetime.now().isoformat(),
                 "open": round(float(latest.get("open", 0)), 2),
                 "high": round(float(latest.get("high", 0)), 2),
@@ -966,33 +972,24 @@ async def get_market_overview():
         except Exception:
             pass
     
-    # 添加市场情绪数据
+    # 添加市场情绪数据（复用 /api/v1/market/sentiment 的完整降级与缓存逻辑）
     sentiment = {}
     try:
-        overview = data_platform.get_market_overview()
-        if overview:
-            sentiment = {
-                "up_down_ratio": overview.get("up_down_ratio"),
-                "advancing": overview.get("advancing"),
-                "declining": overview.get("declining"),
-                "flat": overview.get("flat"),
-                "limit_up": overview.get("limit_up"),
-                "limit_down": overview.get("limit_down"),
-                "total_valid": overview.get("total_valid"),
-                "source": overview.get("source", "mootdx"),
-            }
-        else:
-            sentiment = {
-                "up_down_ratio": None,
-                "advancing": None,
-                "declining": None,
-                "flat": None,
-                "limit_up": None,
-                "limit_down": None,
-                "total_valid": None,
-                "source": "unavailable",
-                "note": "实时情绪数据暂不可用（非交易日/Quotes客户端未连接）",
-            }
+        from backend.api.market import _fetch_market_sentiment
+        s = _fetch_market_sentiment()
+        sentiment = {
+            "up_down_ratio": s.get("up_down_ratio"),
+            "advancing": s.get("advancing"),
+            "declining": s.get("declining"),
+            "flat": None,
+            "limit_up": s.get("limit_up"),
+            "limit_down": s.get("limit_down"),
+            "total_valid": None,
+            "source": s.get("source", "unavailable"),
+            "data_date": s.get("data_date"),
+        }
+        if sentiment["source"] == "unavailable":
+            sentiment["note"] = "实时情绪数据暂不可用（非交易日/Quotes客户端未连接）"
     except Exception:
         sentiment = {
             "up_down_ratio": None,

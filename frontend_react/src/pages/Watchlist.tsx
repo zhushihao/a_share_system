@@ -607,7 +607,11 @@ export default function Watchlist() {
                         {item.symbol}
                       </Link>
                     </td>
-                    <td className="px-4 py-3">{item.name}</td>
+                    <td className="px-4 py-3">
+                      <Link to={`/stock/${item.symbol}`} className="text-sky-600 hover:underline font-medium">
+                        {item.name}
+                      </Link>
+                    </td>
                     <td className="px-4 py-3 text-right font-medium">
                       {quote ? quote.close.toFixed(2) : '-'}
                     </td>
