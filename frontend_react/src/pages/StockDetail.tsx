@@ -14,12 +14,33 @@ import {
   fetchProfile,
   fetchIntraday,
   fetchSettings,
+  fetchStockList,
 } from '@/api/client'
 import TradingViewChart from '@/components/TradingViewChart'
 import IntradayChart from '@/components/IntradayChart'
 import IndicatorPanel from '@/components/IndicatorPanel'
 import { fetchSignal, fetchResonance } from '@/api/client'
 import type { StandardQuote, OHLCVRecord, TechIndicators, PatternData, VolumeNodeData, SupportResistanceData, TradingSignal, ResonanceData } from '@/types'
+
+const F10_LABELS: Record<string, string> = {
+  industry: '所属行业',
+  total_capital: '总股本',
+  circulating_capital: '流通股本',
+  pe: '市盈率',
+  pb: '市净率',
+  eps: '每股收益',
+  bvps: '每股净资产',
+  roe: '净资产收益率',
+  revenue: '营业收入',
+  profit: '净利润',
+  dividend: '股息率',
+  market_cap: '总市值',
+  circulating_market_cap: '流通市值',
+  turnover_rate: '换手率',
+  amplitude: '振幅',
+  volume_ratio: '量比',
+  fiv_min_rise: '5分钟涨幅',
+}
 
 function formatVolume(value: number | undefined | null): string {
   if (value === undefined || value === null || Number.isNaN(value)) return '-'
@@ -61,6 +82,7 @@ export default function StockDetail() {
   const [period, setPeriod] = useState<'minute' | 'daily' | 'weekly' | 'monthly'>('daily')
   const [viewMode, setViewMode] = useState<'kline' | 'intraday'>('kline')
   const [adjustMode, setAdjustMode] = useState<string>('qfq')
+  const [stockNameMap, setStockNameMap] = useState<Record<string, string>>({})
 
   // 加载用户默认复权设置
   useEffect(() => {
@@ -72,6 +94,29 @@ export default function StockDetail() {
         }
       })
       .catch(() => {})
+  }, [])
+
+  // 加载股票名称映射（用于 quote 降级兜底）
+  useEffect(() => {
+    async function loadNameMap() {
+      try {
+        const cached = localStorage.getItem('stock_name_map')
+        if (cached) {
+          setStockNameMap(JSON.parse(cached))
+          return
+        }
+        const data = await fetchStockList(undefined, 20000)
+        const map: Record<string, string> = {}
+        ;(data?.items || data?.data || data || []).forEach((s: any) => {
+          if (s?.code && s?.name) map[s.code] = s.name
+        })
+        setStockNameMap(map)
+        localStorage.setItem('stock_name_map', JSON.stringify(map))
+      } catch (e) {
+        console.error('Failed to load stock name map', e)
+      }
+    }
+    loadNameMap()
   }, [])
 
   const loadData = useCallback(async () => {
@@ -98,7 +143,7 @@ export default function StockDetail() {
         const latest = o.data[o.data.length - 1]
         quote = {
           symbol: symbol,
-          name: null,
+          name: stockNameMap[symbol] || null,
           timestamp: new Date().toISOString(),
           open: latest.open || 0,
           high: latest.high || 0,
@@ -158,8 +203,9 @@ export default function StockDetail() {
     return <div className="text-center py-12 text-slate-400">未找到股票数据</div>
   }
 
-  const change = quote.close - quote.open
-  const changePct = (change / quote.open) * 100
+  const basePrice = quote.pre_close ?? quote.open
+  const change = quote.close - basePrice
+  const changePct = basePrice ? (change / basePrice) * 100 : 0
   const isUp = change >= 0
 
   return (
@@ -270,7 +316,7 @@ export default function StockDetail() {
             <div className="space-y-2 text-sm">
               {Object.entries(profile.data).slice(0, 10).map(([key, value]) => (
                 <div key={key} className="flex justify-between">
-                  <span className="text-slate-500">{key}</span>
+                  <span className="text-slate-500">{F10_LABELS[key] || key}</span>
                   <span className="font-medium text-slate-800 max-w-[60%] truncate text-right">{String(value)}</span>
                 </div>
               ))}

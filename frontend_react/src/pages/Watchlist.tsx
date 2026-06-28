@@ -581,8 +581,9 @@ export default function Watchlist() {
             <tbody className="divide-y divide-slate-100">
               {sorted.map((item) => {
                 const quote = item.quote
-                const changePct = quote
-                  ? ((quote.close - quote.open) / quote.open) * 100
+                const basePrice = quote?.pre_close ?? quote?.open
+                const changePct = quote && basePrice
+                  ? ((quote.close - basePrice) / basePrice) * 100
                   : 0
                 const checked = selectedSymbols.includes(item.symbol)
                 const groupOptions = Array.from(new Set([...(groups || []), item.group].filter(Boolean)))
