@@ -37,6 +37,7 @@ _sentiment_cache: Optional[Dict[str, Any]] = None
 _sentiment_cache_time: Optional[datetime] = None
 _hotspots_cache: Optional[List[Dict[str, Any]]] = None
 _hotspots_cache_time: Optional[datetime] = None
+_SENTIMENT_CACHE_TTL = 300
 _HOTSPOTS_CACHE_TTL = 300
 
 # 四大指数代码
@@ -106,7 +107,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
     global _sentiment_cache, _sentiment_cache_time
     now = datetime.now()
     if _sentiment_cache is not None and _sentiment_cache_time is not None:
-        if (now - _sentiment_cache_time).total_seconds() < _HOTSPOTS_CACHE_TTL:
+        if (now - _sentiment_cache_time).total_seconds() < _SENTIMENT_CACHE_TTL:
             return _sentiment_cache
 
     data_date = _get_latest_trading_day()
@@ -199,6 +200,7 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
             df = network_sectors.sort_values("change_pct", ascending=False).head(10)
             codes = df["sector_code"].astype(str).tolist()
             count_map = _get_sector_component_counts(codes)
+            up_count_map = _get_sector_up_counts(codes)
             result = []
             for i, (_, row) in enumerate(df.iterrows()):
                 code = str(row.get("sector_code", ""))
@@ -210,7 +212,7 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
                     "money_flow": round(row.get("amount", 0), 2),
                     "rank": i + 1,
                     "stock_count": count_map.get(code, 0),
-                    "up_count": 0,
+                    "up_count": up_count_map.get(code, 0),
                     "limit_up_count": 0,
                 })
             _hotspots_cache = result
@@ -441,6 +443,25 @@ def _get_sector_component_counts(sector_codes: List[str]) -> Dict[str, int]:
     if not sector_codes:
         return {}
     results = list(_sector_count_executor.map(_get_sector_component_count, sector_codes))
+    return {code: count for code, count in zip(sector_codes, results)}
+
+
+def _get_sector_up_count(sector_code: str) -> int:
+    """获取板块内上涨家数（基于成分股 change_pct）"""
+    try:
+        df = _fetch_sector_components_from_network(sector_code)
+        if df is not None and len(df) > 0 and "change_pct" in df.columns:
+            return int((df["change_pct"] > 0).sum())
+    except Exception:
+        pass
+    return 0
+
+
+def _get_sector_up_counts(sector_codes: List[str]) -> Dict[str, int]:
+    """并发获取多个板块的上涨家数"""
+    if not sector_codes:
+        return {}
+    results = list(_sector_count_executor.map(_get_sector_up_count, sector_codes))
     return {code: count for code, count in zip(sector_codes, results)}
 
 
