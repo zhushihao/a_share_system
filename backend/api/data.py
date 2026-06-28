@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.services.data_provider import get_data_provider_service
+from backend.services.data_platform import get_data_platform_service
 from backend.config import settings
 
 router = APIRouter()
@@ -123,15 +124,14 @@ async def get_stock_list(
         # 按代码排序，避免截断时丢失特定股票（如 300308 中际旭创）
         df = df.sort_values(by="code").reset_index(drop=True).head(limit)
 
-        # 转换为标准格式，保留 provider 返回的市场字段
+        # 转换为标准格式，按代码前缀强制推断市场（避免 provider 返回错误 market）
         records = []
         for _, row in df.iterrows():
-            raw_market = str(row.get("market", "")).lower().strip()
             code = str(row.get("code", ""))
             records.append({
                 "code": code,
                 "name": str(row.get("name", "")),
-                "market": raw_market if raw_market in ("sh", "sz", "bj") else _infer_market(code),
+                "market": _infer_market(code),
             })
 
         return {
@@ -185,11 +185,10 @@ async def search_stocks(
                 if row_code in seen_codes:
                     continue
                 seen_codes.add(row_code)
-                row_market = str(row.get("market", "")).lower().strip()
                 matches.append({
                     "code": row_code,
                     "name": row_name,
-                    "market": row_market if row_market in ("sh", "sz", "bj") else _infer_market(row_code),
+                    "market": _infer_market(row_code),
                 })
 
             if len(matches) >= limit:
@@ -555,18 +554,36 @@ async def export_data(
 @router.get("/data/health")
 async def data_health():
     """
-    数据源健康检查
+    数据源健康检查（含数据中台自检结果）
     """
     provider = get_data_provider_service()
     health = provider.health_check()
-    
+
     status = "ok"
+    quality_issues = []
     if not health.get("offline_available") and not health.get("realtime_available"):
         status = "degraded"
-    
+
+    # 聚合数据中台自检告警
+    try:
+        platform = get_data_platform_service()
+        sc = getattr(platform, "_last_self_check", None) or {}
+        if sc:
+            qc = sc.get("quality_checks", {})
+            failed = sum(v.get("failed", 0) for v in qc.values())
+            if failed > 0:
+                status = "warning" if status == "ok" else status
+                quality_issues.append(f"数据质量检查失败 {failed} 项")
+            for name, info in sc.get("data_sources", {}).items():
+                if info.get("status") not in ("ok", None):
+                    quality_issues.append(f"{name}: {info['status']}")
+    except Exception:
+        pass
+
     return {
         "status": status,
         "health": health,
+        "quality_issues": quality_issues,
         "timestamp": datetime.now().isoformat(),
     }
 

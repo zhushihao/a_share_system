@@ -39,7 +39,7 @@ except ImportError:
 _mootdx_fetch_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="mootdx_fetch")
 
 # 缓存 key 版本：当复权等核心计算逻辑变更时，通过升级版本号让旧缓存失效
-CACHE_KEY_VERSION = "v2"
+CACHE_KEY_VERSION = "v3"
 
 
 class DataProviderService:
@@ -387,9 +387,12 @@ class DataProviderService:
         # 排序
         if "date" in df.columns:
             df = df.sort_values("date").reset_index(drop=True)
-        
-        # 检测非交易日填充
+
+        # 检测并剔除非交易日填充数据
         df = self._detect_filled_ohlcv(df)
+        df = df[df["is_filled"] != True].reset_index(drop=True)
+        if len(df) == 0:
+            return df
 
         # 选择标准列
         standard_cols = ["date", "code", "open", "high", "low", "close", "volume", "amount", "is_filled"]
@@ -399,32 +402,29 @@ class DataProviderService:
 
     def _detect_filled_ohlcv(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        检测非交易日复制填充。
-        若某条数据的日期为周末，且 OHLC 与前一条完全相同，则标记 is_filled=True。
+        检测非交易日填充数据。
+        凡日期为周六、周日（A股非交易日）的行，均标记 is_filled=True。
         """
-        if df is None or len(df) < 2:
+        if df is None or len(df) < 1:
             if df is not None:
                 df["is_filled"] = False
             return df
         df = df.copy()
         df["is_filled"] = False
-        price_cols = ["open", "high", "low", "close"]
-        for i in range(1, len(df)):
-            try:
-                last = df.iloc[i]
-                prev = df.iloc[i - 1]
-                last_date = str(int(last.get("date", "")))
-                if len(last_date) == 8:
-                    dt = datetime.strptime(last_date, "%Y%m%d")
-                    if dt.weekday() >= 5:  # 周六/周日
-                        ohlc_same = all(
-                            abs(float(last.get(col, 0)) - float(prev.get(col, 0))) < 1e-6
-                            for col in price_cols
-                        )
-                        if ohlc_same:
-                            df.at[df.index[i], "is_filled"] = True
-            except Exception:
-                continue
+        try:
+            dt_series = pd.to_datetime(df["date"], errors="coerce")
+            weekend_mask = dt_series.dt.weekday >= 5
+            df.loc[weekend_mask, "is_filled"] = True
+        except Exception:
+            # 回退：逐行解析
+            for i in range(len(df)):
+                try:
+                    raw_date = str(df.iloc[i].get("date", ""))
+                    dt = pd.to_datetime(raw_date)
+                    if dt.weekday() >= 5:
+                        df.at[df.index[i], "is_filled"] = True
+                except Exception:
+                    continue
         return df
     def _aggregate_period(self, df: pd.DataFrame, period: str) -> pd.DataFrame:
         """
@@ -598,36 +598,39 @@ class DataProviderService:
                                 symbol=idx_symbol,
                                 name=info['name'],
                                 timestamp=datetime.now(),
-                                open=float(row.get('open', price)),
-                                high=float(row.get('high', price)),
-                                low=float(row.get('low', price)),
-                                close=price,
+                                open=round(float(row.get('open', price)), 2),
+                                high=round(float(row.get('high', price)), 2),
+                                low=round(float(row.get('low', price)), 2),
+                                close=round(price, 2),
                                 volume=int(row.get('volume', row.get('vol', 0))),
-                                amount=float(row.get('amount', 0)) or None,
+                                amount=round(float(row.get('amount', 0)), 2) or None,
+                                pre_close=round(float(row.get('pre_close', price)), 2),
                                 source='mootdx',
                                 freq='1d',
                             ))
                             continue  # 成功获取，跳过离线降级
-                
+
                 # 降级：从离线 K 线获取
                 df = self.fetch_ohlcv(info['code'], period='daily', adjust='none')
                 if df is not None and len(df) > 0:
                     latest = df.iloc[-1]
+                    pre_close = round(float(df.iloc[-2]['close']), 2) if len(df) >= 2 else round(float(latest['close']), 2)
                     quotes.append(StandardQuote(
                         symbol=idx_symbol,
                         name=info['name'],
                         timestamp=datetime.now(),
-                        open=float(latest['open']),
-                        high=float(latest['high']),
-                        low=float(latest['low']),
-                        close=float(latest['close']),
+                        open=round(float(latest['open']), 2),
+                        high=round(float(latest['high']), 2),
+                        low=round(float(latest['low']), 2),
+                        close=round(float(latest['close']), 2),
                         volume=int(latest['volume']),
-                        amount=float(latest.get('amount', 0)) if 'amount' in latest else None,
+                        amount=round(float(latest.get('amount', 0)), 2) if 'amount' in latest else None,
+                        pre_close=pre_close,
                         source='mootdx',
                         freq='1d',
                     ))
             except Exception as e:
-                self._obs.log('WARN', f'Index quote failed for {idx_symbol}: {e}', 'DataProviderService')
+                self._obs.log('WARN', f'Index quote failed for {idx_symbol}: {type(e).__name__}', 'DataProviderService')
         
         # 处理股票：先尝试 Quotes 实时接口，失败时降级到离线 K 线数据
         if stock_symbols:
@@ -658,22 +661,24 @@ class DataProviderService:
                             df = self.fetch_ohlcv(code, period='daily', adjust='qfq')
                             if df is not None and len(df) > 0:
                                 latest = df.iloc[-1]
+                                pre_close = round(float(df.iloc[-2]['close']), 2) if len(df) >= 2 else round(float(latest['close']), 2)
                                 quotes.append(StandardQuote(
                                     symbol=code,
                                     name=name_map.get(code),
                                     timestamp=datetime.now(),
-                                    open=float(latest['open']),
-                                    high=float(latest['high']),
-                                    low=float(latest['low']),
-                                    close=float(latest['close']),
+                                    open=round(float(latest['open']), 2),
+                                    high=round(float(latest['high']), 2),
+                                    low=round(float(latest['low']), 2),
+                                    close=round(float(latest['close']), 2),
                                     volume=int(latest['volume']),
-                                    amount=float(latest.get('amount', 0)) if 'amount' in latest else None,
-                                    source='mootdx-offline',
+                                    amount=round(float(latest.get('amount', 0)), 2) if 'amount' in latest else None,
+                                    pre_close=pre_close,
+                                    source='mootdx',
                                     freq='1d',
                                 ))
                         except Exception as e:
-                            self._obs.log('WARN', f'Offline fallback failed for {code}: {e}', 'DataProviderService')
-        
+                            self._obs.log('WARN', f'Offline fallback failed for {code}: {type(e).__name__}', 'DataProviderService')
+
         return quotes
     
     def _df_to_standard_quotes(self, df: pd.DataFrame) -> List[StandardQuote]:
@@ -708,12 +713,14 @@ class DataProviderService:
                 if close <= 0:
                     return None
             
-            open_p = float(row.get("open", close))
-            high = float(row.get("high", close))
-            low = float(row.get("low", close))
+            open_p = round(float(row.get("open", close)), 2)
+            high = round(float(row.get("high", close)), 2)
+            low = round(float(row.get("low", close)), 2)
+            close = round(close, 2)
             volume = int(row.get("volume", row.get("vol", 0)))
-            amount = float(row.get("amount", row.get("amt", 0))) or None
-            
+            amount = round(float(row.get("amount", row.get("amt", 0))), 2) or None
+            pre_close = round(float(row.get("pre_close", row.get("prev_close", close))), 2)
+
             # 时间戳
             ts = datetime.now()
             if "datetime" in row.index:
@@ -726,7 +733,7 @@ class DataProviderService:
                     ts = pd.to_datetime(str(row["date"]))
                 except Exception:
                     pass
-            
+
             return StandardQuote(
                 symbol=code,
                 name=name,
@@ -737,6 +744,7 @@ class DataProviderService:
                 close=close,
                 volume=volume,
                 amount=amount,
+                pre_close=pre_close,
                 source="mootdx",
                 freq="1d",
             )

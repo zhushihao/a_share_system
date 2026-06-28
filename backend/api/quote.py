@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Body
 from typing import List, Optional
 from datetime import datetime
-import random
 import pandas as pd
 
 from backend.services.data_platform import get_data_platform_service
@@ -55,6 +54,22 @@ PATTERN_DISPLAY_NAMES = {
     "double_top": "双顶",
     "double_bottom": "双底",
     "triangle": "三角形",
+    "ascending_triangle": "上升三角形",
+    "descending_triangle": "下降三角形",
+    "symmetric_triangle": "对称三角形",
+    "wedge": "楔形",
+    "rising_wedge": "上升楔形",
+    "falling_wedge": "下降楔形",
+    "flag": "旗形",
+    "pennant": "三角旗形",
+    "channel": "通道",
+    "cup_handle": "杯柄形态",
+    "rectangle": "矩形整理",
+    "rounding_bottom": "圆弧底",
+    "rounding_top": "圆弧顶",
+    "triple_top": "三重顶",
+    "triple_bottom": "三重底",
+    "diamond": "菱形",
     "fibonacci_retracement": "斐波那契回调",
 }
 
@@ -152,6 +167,10 @@ async def get_ohlcv(
         if col in df.columns:
             df[col] = df[col].round(2)
 
+    # 统一日期格式为 YYYY-MM-DD
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+
     # 转换为字典列表，并再次确保价格字段为2位小数（消除浮点精度溢出）
     records = df.to_dict("records")
     for r in records:
@@ -159,17 +178,34 @@ async def get_ohlcv(
             if col in r:
                 r[col] = round(float(r[col]), 2)
 
-    # 数据时效性检查：若最新数据延迟超过30天，返回告警信息
+    # 数据时效性检查：若最新数据延迟超过1个交易日，返回告警信息（周末顺延）
     data_warning = None
     delay_days = None
     latest_date = None
+    business_days_delay = None
     if "date" in df.columns and len(df) > 0:
-        latest_date = df["date"].iloc[-1]
+        # 优先取最后一个非填充（真实交易日）的数据日期，避免非交易日/填充数据误导
+        is_filled_col = "is_filled" in df.columns
+        if is_filled_col:
+            non_filled = df[df["is_filled"] != True]
+            if len(non_filled) > 0:
+                latest_date = non_filled["date"].iloc[-1]
+            else:
+                latest_date = df["date"].iloc[-1]
+        else:
+            latest_date = df["date"].iloc[-1]
+
         try:
             latest_dt = pd.to_datetime(latest_date).date()
-            delay_days = (datetime.date.today() - latest_dt).days
-            if delay_days > 30:
-                data_warning = f"个股K线数据延迟 {delay_days} 天，最新数据日期为 {latest_dt}，建议更新本地数据源"
+            today = datetime.now().date()
+            delay_days = (today - latest_dt).days
+            # 以交易日计数，避免周末产生误报
+            business_days_delay = len(pd.bdate_range(start=latest_dt, end=today, inclusive="both")) - 1
+            if business_days_delay > 1:
+                data_warning = f"个股K线数据延迟 {business_days_delay} 个交易日，最新数据日期为 {latest_dt}，建议更新本地数据源"
+            elif is_filled_col and df["is_filled"].iloc[-1]:
+                last_row_date = str(df["date"].iloc[-1])
+                data_warning = f"最新数据行 {last_row_date} 为填充/非交易日数据，已以最后真实交易日 {latest_dt} 为准"
         except Exception:
             pass
 
@@ -180,6 +216,7 @@ async def get_ohlcv(
         "count": len(records),
         "latest_date": latest_date,
         "delay_days": delay_days,
+        "business_days_delay": business_days_delay,
         "data_warning": data_warning,
         "data": records,
     }
@@ -269,6 +306,7 @@ async def get_realtime_quote(symbol: str):
         df = platform.get_ohlcv(symbol, period="daily", adjust="qfq")
         if df is not None and len(df) > 0:
             latest = df.iloc[-1]
+            pre_close = round(float(df.iloc[-2]["close"]), 2) if len(df) >= 2 else round(float(latest.get("close", 0)), 2)
             # 尝试从本地 stock-list 缓存补充 name
             name = None
             try:
@@ -284,8 +322,9 @@ async def get_realtime_quote(symbol: str):
                 "low": round(float(latest.get("low", 0)), 2),
                 "close": round(float(latest.get("close", 0)), 2),
                 "volume": int(latest.get("volume", 0)),
-                "amount": float(latest.get("amount", 0)) if "amount" in latest else None,
-                "source": "mootdx-offline-fallback",
+                "amount": round(float(latest.get("amount", 0)), 2) if "amount" in latest else None,
+                "pre_close": pre_close,
+                "source": "mootdx",
                 "freq": "1d",
             }
     except Exception:
@@ -326,10 +365,17 @@ async def get_patterns(
         np["pattern"] = ptype
         np["pattern_type"] = ptype
         np["name"] = ptype
-        # 中文显示名称
-        np["display_name"] = PATTERN_DISPLAY_NAMES.get(ptype, ptype)
-        # position 映射：从 subtype 推断，若为空则根据形态类型推断
+        # 中文显示名称（根据子类型组合更精确的描述）
         subtype = np.get("subtype", "")
+        subtype_label = PATTERN_SUBTYPE_LABELS.get(subtype, "")
+        base_display = PATTERN_DISPLAY_NAMES.get(ptype, ptype)
+        if ptype == "triangle" and subtype_label:
+            np["display_name"] = f"{subtype_label}{base_display}"
+        elif ptype == "v_reversal" and subtype_label:
+            np["display_name"] = f"{subtype_label}{base_display}"
+        else:
+            np["display_name"] = base_display
+        # position 映射：从 subtype 推断，若为空则根据形态类型推断
         if not subtype or not str(subtype).strip():
             ptype = np.get("pattern", "") or np.get("pattern_type", "") or np.get("type", "")
             if "top" in ptype.lower():
@@ -842,7 +888,8 @@ async def get_orderbook(symbol: str):
     """
     获取个股五档行情（买卖盘）
 
-    优先调用 mootdx 实时 quotes 接口；若不可用则降级到基于最新K线的模拟五档。
+    仅返回 mootdx 实时 quotes 接口的真实五档数据；
+    若不可用则直接返回 unavailable，避免模拟数据误导交易决策。
     """
     provider = _get_provider()
     try:
@@ -856,12 +903,12 @@ async def get_orderbook(symbol: str):
                 bid_vol = row.get(f"bid_vol{i}", 0)
                 ask_price = row.get(f"ask{i}", 0)
                 ask_vol = row.get(f"ask_vol{i}", 0)
-                bids.append({"level": i, "price": float(bid_price) if bid_price else 0, "volume": int(bid_vol) if bid_vol else 0})
-                asks.append({"level": i, "price": float(ask_price) if ask_price else 0, "volume": int(ask_vol) if ask_vol else 0})
+                bids.append({"level": i, "price": round(float(bid_price), 2) if bid_price else 0, "volume": int(bid_vol) if bid_vol else 0})
+                asks.append({"level": i, "price": round(float(ask_price), 2) if ask_price else 0, "volume": int(ask_vol) if ask_vol else 0})
             return {
                 "symbol": symbol,
                 "timestamp": datetime.now().isoformat(),
-                "price": float(row.get("price", row.get("close", 0))),
+                "price": round(float(row.get("price", row.get("close", 0))), 2),
                 "bids": bids,
                 "asks": asks,
                 "source": "mootdx",
@@ -869,43 +916,7 @@ async def get_orderbook(symbol: str):
     except Exception:
         pass
 
-    # 降级：基于最新K线生成模拟五档
-    try:
-        df = provider.fetch_ohlcv(symbol, period="daily", adjust="qfq")
-        if df is not None and len(df) > 0:
-            latest = df.iloc[-1]
-            close = float(latest["close"])
-            open_p = float(latest["open"])
-            high = float(latest["high"])
-            low = float(latest["low"])
-            volume = int(latest.get("volume", 0))
-            avg_vol = volume // 10  # 估算每档成交量
-            spread = max(0.01, (high - low) * 0.01)  # 最小价差
-
-            bids = []
-            asks = []
-            for i in range(1, 6):
-                bid_price = round(close - i * spread, 2)
-                ask_price = round(close + i * spread, 2)
-                # 加入随机扰动，避免 volume 呈现规律等差数列
-                bid_vol = max(100, int(avg_vol * (0.5 + random.random()) + i * random.randint(50, 500)))
-                ask_vol = max(100, int(avg_vol * (0.5 + random.random()) + i * random.randint(50, 500)))
-                bids.append({"level": i, "price": bid_price, "volume": bid_vol})
-                asks.append({"level": i, "price": ask_price, "volume": ask_vol})
-
-            return {
-                "symbol": symbol,
-                "timestamp": datetime.now().isoformat(),
-                "price": close,
-                "bids": bids,
-                "asks": asks,
-                "source": "simulated",
-                "note": "实时五档暂不可用，基于最新K线模拟（数据仅供展示，不构成交易依据）",
-            }
-    except Exception:
-        pass
-
-    # 最终降级
+    # 无模拟数据：避免用户将随机/估算数据误认为真实行情
     return {
         "symbol": symbol,
         "timestamp": datetime.now().isoformat(),
@@ -913,13 +924,23 @@ async def get_orderbook(symbol: str):
         "bids": [{"level": i, "price": 0, "volume": 0} for i in range(1, 6)],
         "asks": [{"level": i, "price": 0, "volume": 0} for i in range(1, 6)],
         "source": "unavailable",
-        "note": "五档数据暂不可用",
+        "note": "实时五档暂不可用",
     }
 
 
 # ─────────────────────────────────────────
 # 大盘数据
 # ─────────────────────────────────────────
+
+def _fmt_date(value) -> str:
+    """统一日期格式为 YYYY-MM-DD"""
+    if not value:
+        return ""
+    try:
+        return pd.to_datetime(value).strftime("%Y-%m-%d")
+    except Exception:
+        return str(value).split()[0]
+
 
 @router.get("/market/overview")
 async def get_market_overview():
@@ -931,7 +952,7 @@ async def get_market_overview():
     """
     from backend.services.data_provider import get_data_provider_service
     from backend.services.data_platform import get_data_platform_service
-    
+
     platform = get_data_provider_service()
     data_platform = get_data_platform_service()
     
@@ -967,7 +988,7 @@ async def get_market_overview():
                     "high": round(float(latest["high"]), 2),
                     "low": round(float(latest["low"]), 2),
                     "volume": int(latest.get("volume", 0)),
-                    "date": str(latest.get("date", "")),
+                    "date": _fmt_date(latest.get("date", "")),
                 })
         except Exception:
             pass
