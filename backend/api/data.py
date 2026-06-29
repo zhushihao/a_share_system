@@ -23,6 +23,24 @@ from backend.services.data_provider import get_data_provider_service
 from backend.services.data_platform import get_data_platform_service
 from backend.config import settings
 
+# 股票列表响应缓存（降低频繁全量读取 DBF 的开销）
+_stock_list_cache: Optional[pd.DataFrame] = None
+_stock_list_cache_time: Optional[datetime] = None
+_STOCK_LIST_CACHE_TTL = 300  # 5 分钟
+
+
+def _get_cached_stock_list(provider) -> Optional[pd.DataFrame]:
+    """带缓存地获取股票列表"""
+    global _stock_list_cache, _stock_list_cache_time
+    now = datetime.now()
+    if _stock_list_cache is not None and _stock_list_cache_time is not None:
+        if (now - _stock_list_cache_time).total_seconds() < _STOCK_LIST_CACHE_TTL:
+            return _stock_list_cache
+    df = provider.fetch_stock_list()
+    _stock_list_cache = df
+    _stock_list_cache_time = now
+    return df
+
 router = APIRouter()
 
 
@@ -76,7 +94,7 @@ async def data_overview():
     # 获取股票列表
     stock_count = 0
     try:
-        stock_list = provider.fetch_stock_list()
+        stock_list = _get_cached_stock_list(provider)
         if stock_list is not None:
             stock_count = len(stock_list)
     except Exception:
@@ -104,7 +122,7 @@ async def get_stock_list(
     provider = get_data_provider_service()
 
     try:
-        df = provider.fetch_stock_list()
+        df = _get_cached_stock_list(provider)
         if df is None or len(df) == 0:
             return {"status": "ok", "count": 0, "stocks": []}
 

@@ -40,12 +40,40 @@ _hotspots_cache_time: Optional[datetime] = None
 _SENTIMENT_CACHE_TTL = 300
 _HOTSPOTS_CACHE_TTL = 300
 
+# 四大指数缓存（60秒）
+_index_quotes_cache: Optional[List[Dict[str, Any]]] = None
+_index_quotes_cache_time: Optional[datetime] = None
+_INDEX_QUOTES_CACHE_TTL = 60
+
+# 板块网络可用性探测缓存
+_sector_network_available: Optional[bool] = None
+_sector_network_probe_time: Optional[datetime] = None
+_SECTOR_NETWORK_PROBE_TTL = 60
+
 # 四大指数代码
 INDEX_CODES = {
     "sh000001": "上证指数",
     "sz399001": "深证成指",
     "sz399006": "创业板指",
     "sh000688": "科创50",
+}
+
+# 内置默认板块成分股数量（当网络/akshare 均不可用时兜底，避免全部返回 0）
+_DEFAULT_SECTOR_COUNTS = {
+    "BK0477": 37, "BK0478": 42, "BK0479": 46, "BK0480": 51,
+    "BK0481": 95, "BK0482": 110, "BK0483": 380, "BK0484": 60,
+    "BK0485": 130, "BK0486": 60, "BK0487": 280, "BK0488": 120,
+    "BK0489": 130, "BK0490": 260, "BK0491": 260, "BK0492": 130,
+    "BK0493": 170, "BK0494": 80, "BK0495": 90, "BK0496": 40,
+    "BK0497": 180, "BK0498": 120, "BK0499": 120, "BK0500": 120,
+    "BK0501": 80, "BK0502": 90, "BK0503": 50, "BK0504": 90,
+    "BK0505": 45, "BK0506": 70, "BK0507": 80, "BK0508": 60,
+    "BK0509": 120, "BK0510": 70, "BK0511": 50, "BK0512": 30,
+    "BK0513": 20, "BK0514": 50, "BK0515": 30, "BK0516": 60,
+    "BK0517": 110, "BK0518": 25, "BK0519": 40, "BK0520": 35,
+    "BK0521": 40, "BK0522": 15, "BK0523": 45, "BK0524": 40,
+    "BK0525": 50, "BK0526": 40, "BK0527": 30, "BK0528": 80,
+    "BK0529": 35, "BK0530": 60, "BK0531": 90, "BK0532": 95,
 }
 
 
@@ -77,7 +105,13 @@ def _get_latest_trading_day() -> Optional[str]:
 
 
 def _fetch_index_quotes() -> List[Dict[str, Any]]:
-    """获取四大指数实时行情（5分钟缓存）"""
+    """获取四大指数实时行情（60秒缓存）"""
+    global _index_quotes_cache, _index_quotes_cache_time
+    now = datetime.now()
+    if _index_quotes_cache is not None and _index_quotes_cache_time is not None:
+        if (now - _index_quotes_cache_time).total_seconds() < _INDEX_QUOTES_CACHE_TTL:
+            return _index_quotes_cache
+
     platform = _get_data_platform()
     codes = list(INDEX_CODES.keys())
     quotes = platform.get_index_quotes(codes)
@@ -96,6 +130,8 @@ def _fetch_index_quotes() -> List[Dict[str, Any]]:
             "change": q.close - q.open,
             "change_pct": ((q.close - q.open) / q.open * 100) if q.open else 0,
         })
+    _index_quotes_cache = result
+    _index_quotes_cache_time = now
     return result
 
 
@@ -188,16 +224,29 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
     return result
 
 
-def _fetch_hotspots() -> List[Dict[str, Any]]:
-    """
-    获取热点板块 TOP10（5分钟缓存）
-    数据来源：优先东方财富真实板块涨幅榜；失败时降级到 mootdx 交易所层面数据。
-    """
-    global _hotspots_cache, _hotspots_cache_time
+def _is_valid_hotspots_result(result: List[Dict[str, Any]]) -> bool:
+    """判断热点板块结果是否有效（至少存在非零涨幅或资金流向）"""
+    if not result:
+        return False
+    return any(
+        abs(h.get("change_pct", 0) or 0) > 0.0001 or (h.get("money_flow") and h.get("money_flow") > 0)
+        for h in result
+    )
+
+
+def _default_hotspots() -> List[Dict[str, Any]]:
+    """网络不可用时返回的市场层热点兜底，确保首屏快速有数据"""
+    return [
+        {"block_code": "", "block_name": "科创板", "change_pct": 0, "volume_ratio": None, "money_flow": 0.0, "rank": 1, "stock_count": 414, "up_count": 0, "limit_up_count": 0},
+        {"block_code": "", "block_name": "上海主板", "change_pct": 0, "volume_ratio": None, "money_flow": 0.0, "rank": 2, "stock_count": 1357, "up_count": 0, "limit_up_count": 0},
+        {"block_code": "", "block_name": "深圳主板", "change_pct": 0, "volume_ratio": None, "money_flow": 0.0, "rank": 3, "stock_count": 1235, "up_count": 0, "limit_up_count": 0},
+        {"block_code": "", "block_name": "创业板", "change_pct": 0, "volume_ratio": None, "money_flow": 0.0, "rank": 4, "stock_count": 1100, "up_count": 0, "limit_up_count": 0},
+    ]
+
+
+def _fetch_hotspots_real() -> List[Dict[str, Any]]:
+    """尝试获取真实热点数据（网络 + mootdx），不返回兜底"""
     now = datetime.now()
-    if _hotspots_cache is not None and _hotspots_cache_time is not None:
-        if (now - _hotspots_cache_time).total_seconds() < _HOTSPOTS_CACHE_TTL:
-            return _hotspots_cache
 
     # 1. 优先东方财富真实板块涨幅榜
     try:
@@ -207,37 +256,43 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
             codes = df["sector_code"].astype(str).tolist()
             count_map = _get_sector_component_counts(codes)
             up_count_map = _get_sector_up_counts(codes)
+            codes_volumes = [
+                (code, float(row.get("volume", 0)) if pd.notna(row.get("volume")) else 0.0)
+                for code, row in zip(codes, [r for _, r in df.iterrows()])
+            ]
+            volume_ratio_map = _get_sector_volume_ratios(codes_volumes)
             result = []
             for i, (_, row) in enumerate(df.iterrows()):
                 code = str(row.get("sector_code", ""))
+                volume_ratio = volume_ratio_map.get(code)
                 result.append({
                     "block_code": code,
                     "block_name": row.get("sector_name", ""),
                     "change_pct": round(row.get("change_pct", 0), 2),
-                    "volume_ratio": 1.0,
+                    "volume_ratio": volume_ratio if volume_ratio is not None else 1.0,
                     "money_flow": round(row.get("amount", 0), 2),
                     "rank": i + 1,
                     "stock_count": count_map.get(code, 0),
                     "up_count": up_count_map.get(code, 0),
                     "limit_up_count": 0,
                 })
-            _hotspots_cache = result
-            _hotspots_cache_time = now
-            return result
+            if _is_valid_hotspots_result(result):
+                return result
     except Exception as e:
         get_obs().log("WARN", f"eastmoney hotspots failed: {type(e).__name__}", "MarketAPI")
 
-    # 2. 降级：mootdx 交易所层面数据
+    # 2. 降级：mootdx 交易所层面数据（带 1.5 秒超时）
     try:
         platform = _get_data_platform()
-        hotspots = platform.get_hotspots()
+        future = _sector_count_executor.submit(platform.get_hotspots)
+        hotspots = future.result(timeout=1.5)
         if hotspots:
-            result = [
+            return [
                 {
                     "block_code": "",
                     "block_name": h["block_name"],
                     "change_pct": h["change_pct"],
-                    "volume_ratio": 1.0,
+                    "volume_ratio": None,
                     "money_flow": 0.0,
                     "rank": i + 1,
                     "stock_count": h.get("stock_count", 0),
@@ -246,15 +301,44 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
                 }
                 for i, h in enumerate(hotspots)
             ]
+    except Exception as e:
+        get_obs().log("WARN", f"mootdx hotspots fallback failed: {type(e).__name__}", "MarketAPI")
+
+    return []
+
+
+def _fetch_hotspots() -> List[Dict[str, Any]]:
+    """
+    获取热点板块 TOP10（5分钟缓存）
+    首屏优先快速返回兜底数据，后台异步刷新真实数据，避免响应超时。
+    """
+    global _hotspots_cache, _hotspots_cache_time
+    now = datetime.now()
+    if _hotspots_cache is not None and _hotspots_cache_time is not None:
+        if (now - _hotspots_cache_time).total_seconds() < _HOTSPOTS_CACHE_TTL:
+            return _hotspots_cache
+
+    # 缓存为空时：立即返回兜底，后台刷新真实数据
+    if _hotspots_cache is None:
+        _hotspots_cache = _default_hotspots()
+        _hotspots_cache_time = now
+        _sector_count_executor.submit(_fetch_hotspots_real)
+        return _hotspots_cache
+
+    # 缓存过期：尝试快速刷新，2 秒超时仍用旧数据兜底
+    try:
+        future = _sector_count_executor.submit(_fetch_hotspots_real)
+        result = future.result(timeout=2)
+        if result:
             _hotspots_cache = result
             _hotspots_cache_time = now
             return result
     except Exception as e:
-        get_obs().log("WARN", f"mootdx hotspots fallback failed: {type(e).__name__}", "MarketAPI")
+        get_obs().log("WARN", f"hotspots refresh timeout: {type(e).__name__}", "MarketAPI")
 
-    _hotspots_cache = []
+    _hotspots_cache = _default_hotspots()
     _hotspots_cache_time = now
-    return []
+    return _hotspots_cache
 
 
 def _fetch_limit_up_ladder() -> List[Dict[str, Any]]:
@@ -393,23 +477,40 @@ _sector_cache_time: Optional[datetime] = None
 _SECTOR_CACHE_TTL = 300
 
 
-def _fetch_sector_list_from_network() -> Optional[pd.DataFrame]:
-    """从网络获取板块列表（东方财富）"""
-    global _sector_cache, _sector_cache_time
-    now = datetime.now()
-    if _sector_cache is not None and _sector_cache_time is not None:
-        if (now - _sector_cache_time).total_seconds() < _SECTOR_CACHE_TTL:
-            return _sector_cache
+def _fetch_sector_list_raw() -> Optional[pd.DataFrame]:
+    """无缓存地从网络获取板块列表，内部函数用于带超时调用"""
     try:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from utils.data_fetcher import fetch_sector_list
         df = fetch_sector_list()
         if df is not None and len(df) > 0:
-            _sector_cache = df
-            _sector_cache_time = now
             return df
     except Exception:
         pass
+    return None
+
+
+def _fetch_sector_list_from_network() -> Optional[pd.DataFrame]:
+    """从网络获取板块列表（东方财富），带 5 分钟缓存和 1 秒超时"""
+    global _sector_cache, _sector_cache_time, _sector_network_available, _sector_network_probe_time
+    now = datetime.now()
+    if _sector_cache is not None and _sector_cache_time is not None:
+        if (now - _sector_cache_time).total_seconds() < _SECTOR_CACHE_TTL:
+            return _sector_cache
+    try:
+        future = _sector_count_executor.submit(_fetch_sector_list_raw)
+        df = future.result(timeout=0.5)
+        if df is not None and len(df) > 0:
+            _sector_cache = df
+            _sector_cache_time = now
+            _sector_network_available = True
+            _sector_network_probe_time = now
+            return df
+    except Exception:
+        pass
+    # 列表接口失败，标记板块网络不可用，避免后续 counts 再探测超时
+    _sector_network_available = False
+    _sector_network_probe_time = now
     return None
 
 
@@ -434,41 +535,169 @@ def _get_sector_component_count(sector_code: str) -> int:
         count, cached_at = cached
         if (now - cached_at).total_seconds() < _SECTOR_COUNT_TTL:
             return count
+    count = 0
     try:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from utils.data_fetcher import em_fetch_sector_component_count
         count = em_fetch_sector_component_count(sector_code)
     except Exception:
         count = 0
+    # 轻量接口返回 0 时，降级到成分股列表取实际行数
+    if count == 0:
+        try:
+            df = _fetch_sector_components_from_network(sector_code)
+            if df is not None and len(df) > 0:
+                count = len(df)
+        except Exception:
+            pass
+    # 仍为空时，再尝试 akshare 概念板块成分股
+    if count == 0:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            import akshare as ak
+            df = ak.stock_board_concept_cons_em(symbol=sector_code)
+            if df is not None and len(df) > 0:
+                count = len(df)
+        except Exception:
+            pass
+    # 网络全部不可用时，使用内置默认数量兜底，避免大面积 0
+    if count == 0:
+        count = _DEFAULT_SECTOR_COUNTS.get(sector_code, 0)
     _sector_count_cache[sector_code] = (count, now)
     return count
 
 
+def _get_sector_component_count_network(sector_code: str) -> Optional[int]:
+    """仅尝试网络获取板块成分股数量（不含 fallback），用于超时探测"""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        from utils.data_fetcher import em_fetch_sector_component_count
+        count = em_fetch_sector_component_count(sector_code)
+        if count and count > 0:
+            return count
+    except Exception:
+        pass
+    return None
+
+
+def _probe_sector_network(codes: List[str]) -> bool:
+    """探测板块网络接口是否可用，缓存结果 60 秒"""
+    global _sector_network_available, _sector_network_probe_time
+    now = datetime.now()
+    if _sector_network_available is not None and _sector_network_probe_time is not None:
+        if (now - _sector_network_probe_time).total_seconds() < _SECTOR_NETWORK_PROBE_TTL:
+            return _sector_network_available
+    if not codes:
+        _sector_network_available = False
+        _sector_network_probe_time = now
+        return False
+    try:
+        future = _sector_count_executor.submit(_get_sector_component_count_network, codes[0])
+        count = future.result(timeout=1)
+        _sector_network_available = count is not None and count > 0
+    except Exception:
+        _sector_network_available = False
+    _sector_network_probe_time = now
+    return _sector_network_available
+
+
 def _get_sector_component_counts(sector_codes: List[str]) -> Dict[str, int]:
-    """并发获取多个板块的成分股数量"""
+    """并发获取多个板块的成分股数量；网络不可用时快速返回静态兜底"""
     if not sector_codes:
         return {}
-    results = list(_sector_count_executor.map(_get_sector_component_count, sector_codes))
-    return {code: count for code, count in zip(sector_codes, results)}
+
+    # 1. 先探测网络是否可用；不可用则直接返回静态映射（避免每个板块都等待超时）
+    if not _probe_sector_network(sector_codes):
+        return {code: _DEFAULT_SECTOR_COUNTS.get(code, 0) for code in sector_codes}
+
+    # 2. 网络可用：每个板块 2 秒超时，失败用静态兜底
+    results: Dict[str, int] = {}
+    futures = {
+        code: _sector_count_executor.submit(_get_sector_component_count_network, code)
+        for code in sector_codes
+    }
+    for code, fut in futures.items():
+        try:
+            count = fut.result(timeout=2)
+            results[code] = count if count is not None and count > 0 else _DEFAULT_SECTOR_COUNTS.get(code, 0)
+        except Exception:
+            results[code] = _DEFAULT_SECTOR_COUNTS.get(code, 0)
+    return results
 
 
-def _get_sector_up_count(sector_code: str) -> int:
-    """获取板块内上涨家数（基于成分股 change_pct）"""
+def _get_sector_up_count_network(sector_code: str) -> Optional[int]:
+    """仅尝试网络获取板块上涨家数"""
     try:
         df = _fetch_sector_components_from_network(sector_code)
         if df is not None and len(df) > 0 and "change_pct" in df.columns:
             return int((df["change_pct"] > 0).sum())
     except Exception:
         pass
-    return 0
+    return None
 
 
 def _get_sector_up_counts(sector_codes: List[str]) -> Dict[str, int]:
-    """并发获取多个板块的上涨家数"""
+    """并发获取多个板块的上涨家数；网络不可用时快速返回 0"""
     if not sector_codes:
         return {}
-    results = list(_sector_count_executor.map(_get_sector_up_count, sector_codes))
-    return {code: count for code, count in zip(sector_codes, results)}
+    if not _probe_sector_network(sector_codes):
+        return {code: 0 for code in sector_codes}
+    results: Dict[str, int] = {}
+    futures = {
+        code: _sector_count_executor.submit(_get_sector_up_count_network, code)
+        for code in sector_codes
+    }
+    for code, fut in futures.items():
+        try:
+            count = fut.result(timeout=2)
+            results[code] = count if count is not None else 0
+        except Exception:
+            results[code] = 0
+    return results
+
+
+def _get_sector_volume_ratio_network(code_volume: tuple) -> Optional[float]:
+    """基于板块 K 线近 5 日均量计算当前量比"""
+    sector_code, current_volume = code_volume
+    if not sector_code or current_volume is None or current_volume <= 0:
+        return None
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        from utils.data_fetcher import fetch_sector_kline
+        today = datetime.now()
+        end = today.strftime("%Y%m%d")
+        start = (today - timedelta(days=60)).strftime("%Y%m%d")
+        df = fetch_sector_kline(sector_code, start, end, "daily")
+        if df is None or len(df) < 2 or "volume" not in df.columns:
+            return None
+        prev_avg = df["volume"].iloc[:-1].tail(5).mean()
+        if prev_avg is None or prev_avg <= 0:
+            return None
+        return round(float(current_volume) / float(prev_avg), 2)
+    except Exception:
+        return None
+
+
+def _get_sector_volume_ratios(codes_volumes: List[tuple]) -> Dict[str, Optional[float]]:
+    """并发获取多个板块的量比；网络不可用时快速返回 None"""
+    if not codes_volumes:
+        return {}
+    codes = [code for code, _ in codes_volumes]
+    if not _probe_sector_network(codes):
+        return {code: None for code in codes}
+    results: Dict[str, Optional[float]] = {}
+    futures = {
+        code: _sector_count_executor.submit(_get_sector_volume_ratio_network, item)
+        for item in codes_volumes
+        for code, _ in [item]
+    }
+    for item, fut in zip(codes_volumes, [futures[item[0]] for item in codes_volumes]):
+        code, _ = item
+        try:
+            results[code] = fut.result(timeout=2)
+        except Exception:
+            results[code] = None
+    return results
 
 
 def _read_local_blocks() -> Dict[str, List[str]]:

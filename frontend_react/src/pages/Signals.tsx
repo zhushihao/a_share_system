@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import {
   ScanLine,
   TrendingUp,
@@ -29,6 +29,26 @@ import {
   closeSignal,
 } from '@/api/client'
 import type { SignalItem, SignalStrategy, ResonanceData } from '@/types'
+
+function formatRelativeTime(timestamp: string | number | Date | null | undefined): string {
+  if (!timestamp) return '--'
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return String(timestamp)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 0) return date.toLocaleDateString('zh-CN')
+  if (diffSec < 60) return '刚刚'
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}分钟前`
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour}小时前`
+  const diffDay = Math.floor(diffHour / 24)
+  if (diffDay < 7) return `${diffDay}天前`
+  const diffWeek = Math.floor(diffDay / 7)
+  if (diffWeek < 4) return `${diffWeek}周前`
+  return date.toLocaleDateString('zh-CN')
+}
 
 function SignalBadge({ type }: { type: string }) {
   const configs: Record<string, { className: string; icon: React.ReactNode }> = {
@@ -80,14 +100,13 @@ export default function Signals() {
     loadStrategies()
     loadStats()
     loadPerformance()
-  }, [filterStrategy, filterType])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function loadSignals() {
     setLoading(true)
     try {
-      const params: any = { limit: 100 }
-      if (filterStrategy) params.strategy = filterStrategy
-      const resp = await fetchSignals(params)
+      const resp = await fetchSignals({ limit: 100 })
       setSignals(resp.signals || [])
     } catch (e) {
       console.error('Failed to load signals', e)
@@ -236,11 +255,20 @@ export default function Signals() {
 
   const filteredSignals = signals.filter((s) => {
     if (filterType && s.signal_type !== filterType) return false
+    if (filterStrategy && s.strategy !== filterStrategy) return false
     return true
   })
 
   const dailySignals = filteredSignals.filter((s) => s.category === 'daily')
   const intradaySignals = filteredSignals.filter((s) => s.category === 'intraday')
+
+  const strategyMap = React.useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const s of strategies) {
+      map[s.name] = s.display_name
+    }
+    return map
+  }, [strategies])
 
   return (
     <div className="space-y-6">
@@ -502,6 +530,7 @@ export default function Signals() {
                 <SignalRow
                   key={signal.id || `${signal.symbol}-${signal.timestamp}-${signal.strategy}`}
                   signal={signal}
+                  strategyMap={strategyMap}
                   onAck={handleAck}
                   onDelete={handleDelete}
                   onTrack={handleTrack}
@@ -529,6 +558,7 @@ export default function Signals() {
                 <SignalRow
                   key={signal.id || `${signal.symbol}-${signal.timestamp}-${signal.strategy}`}
                   signal={signal}
+                  strategyMap={strategyMap}
                   onAck={handleAck}
                   onDelete={handleDelete}
                   onTrack={handleTrack}
@@ -543,29 +573,46 @@ export default function Signals() {
   )
 }
 
-function SignalRow({
+const SignalRow = React.memo(function SignalRow({
   signal,
+  strategyMap,
   onAck,
   onDelete,
   onTrack,
   onClose,
 }: {
   signal: SignalItem
+  strategyMap: Record<string, string>
   onAck: (id: string) => void
   onDelete: (id: string) => void
   onTrack?: (id: string) => void
   onClose?: (id: string, status: string) => void
 }) {
-  const [showActions, setShowActions] = useState(false)
-
+  const navigate = useNavigate()
+  const handleRowClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement
+    if (target.closest('a, button, input, select, textarea')) {
+      return
+    }
+    navigate(`/stock/${signal.symbol}?signal_id=${signal.id}`)
+  }
   return (
-    <div className={`px-4 py-3 hover:bg-slate-50 transition ${signal.acknowledged ? 'opacity-60' : ''}`}>
+    <div
+      onClick={handleRowClick}
+      className={`px-4 py-3 hover:bg-slate-50 transition cursor-pointer ${signal.acknowledged ? 'opacity-60' : ''}`}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <SignalBadge type={signal.signal_type} />
+            {signal.acknowledged && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200">
+                <Check size={12} />
+                已确认
+              </span>
+            )}
             <span className="text-sm font-medium text-slate-700">
-              <Link to={`/stock/${signal.symbol}`} className="hover:text-sky-600 transition">
+              <Link to={`/stock/${signal.symbol}?signal_id=${signal.id}`} className="hover:text-sky-600 transition">
                 {signal.symbol}
               </Link>
               {' '}
@@ -573,7 +620,9 @@ function SignalRow({
                 <span className="text-slate-400">({signal.name})</span>
               )}
             </span>
-            <span className="text-xs text-slate-400">{signal.timestamp}</span>
+            <span className="text-xs text-slate-400" title={signal.timestamp ? new Date(signal.timestamp).toLocaleString('zh-CN') : undefined}>
+              {formatRelativeTime(signal.timestamp)}
+            </span>
             {signal.strategy === 'signal_composer' && (
               <span className="text-xs px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-200">
                 多因子合成
@@ -583,7 +632,9 @@ function SignalRow({
           <p className="text-sm text-slate-600">{signal.description}</p>
           <div className="flex items-center gap-4 mt-2">
             <ConfidenceBar value={signal.confidence} />
-            <span className="text-xs text-slate-500">{signal.strategy_label || signal.strategy}</span>
+            <span className="text-xs text-slate-500" title={signal.strategy_label || strategyMap[signal.strategy] || signal.strategy}>
+              {signal.strategy_label || strategyMap[signal.strategy] || signal.strategy}
+            </span>
             {signal.price > 0 && (
               <span className="text-xs text-slate-500">价格: {signal.price.toFixed(2)}</span>
             )}
@@ -613,63 +664,57 @@ function SignalRow({
           {signal.id && signal.status === 'open' && onTrack && (
             <button
               onClick={() => onTrack(signal.id!)}
-              className="p-1.5 rounded hover:bg-slate-200 text-slate-400 hover:text-amber-600 transition"
+              className="p-2.5 rounded hover:bg-slate-200 text-slate-400 hover:text-amber-600 transition min-w-[44px] min-h-[44px] flex items-center justify-center"
               title="追踪绩效"
             >
-              <Activity size={14} />
+              <Activity size={18} />
             </button>
           )}
           {signal.id && signal.status === 'open' && onClose && (
-            <button
-              onClick={() => setShowActions(!showActions)}
-              className="p-1.5 rounded hover:bg-slate-200 text-slate-400 hover:text-purple-600 transition"
-              title="平仓"
-            >
-              <Check size={14} />
-            </button>
-          )}
-          {showActions && signal.id && onClose && (
-            <div className="absolute right-0 mt-8 bg-white border border-slate-200 rounded-lg shadow-lg p-2 z-10 flex flex-col gap-1">
+            <>
               <button
-                onClick={() => { onClose(signal.id!, 'manual'); setShowActions(false) }}
-                className="text-xs px-2 py-1 rounded hover:bg-slate-100 text-slate-600 text-left"
+                onClick={() => onClose(signal.id!, 'manual')}
+                className="p-2.5 rounded hover:bg-slate-200 text-slate-400 hover:text-purple-600 transition min-w-[44px] min-h-[44px] flex items-center justify-center"
+                title="手动平仓"
               >
-                手动平仓
+                <Check size={18} />
               </button>
               <button
-                onClick={() => { onClose(signal.id!, 'hit_target'); setShowActions(false) }}
-                className="text-xs px-2 py-1 rounded hover:bg-red-50 text-red-600 text-left"
+                onClick={() => onClose(signal.id!, 'hit_target')}
+                className="p-2.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-600 transition min-w-[44px] min-h-[44px] flex items-center justify-center"
+                title="标记止盈"
               >
-                标记止盈
+                <TrendingUp size={18} />
               </button>
               <button
-                onClick={() => { onClose(signal.id!, 'hit_stop'); setShowActions(false) }}
-                className="text-xs px-2 py-1 rounded hover:bg-emerald-50 text-emerald-600 text-left"
+                onClick={() => onClose(signal.id!, 'hit_stop')}
+                className="p-2.5 rounded hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 transition min-w-[44px] min-h-[44px] flex items-center justify-center"
+                title="标记止损"
               >
-                标记止损
+                <TrendingDown size={18} />
               </button>
-            </div>
+            </>
           )}
           {signal.id && !signal.acknowledged && (
             <button
               onClick={() => onAck(signal.id!)}
-              className="p-1.5 rounded hover:bg-slate-200 text-slate-400 hover:text-sky-600 transition"
+              className="p-2.5 rounded hover:bg-slate-200 text-slate-400 hover:text-sky-600 transition min-w-[44px] min-h-[44px] flex items-center justify-center"
               title="确认"
             >
-              <Check size={14} />
+              <Check size={18} />
             </button>
           )}
           {signal.id && (
             <button
               onClick={() => onDelete(signal.id!)}
-              className="p-1.5 rounded hover:bg-slate-200 text-slate-400 hover:text-red-600 transition"
+              className="p-2.5 rounded hover:bg-slate-200 text-slate-400 hover:text-red-600 transition min-w-[44px] min-h-[44px] flex items-center justify-center"
               title="删除"
             >
-              <Trash2 size={14} />
+              <Trash2 size={18} />
             </button>
           )}
         </div>
       </div>
     </div>
   )
-}
+})

@@ -101,6 +101,26 @@ class DataProviderService:
                         name_map[code] = name
         except Exception as e:
             self._obs.log("WARN", f"Failed to load stock name map: {e}", "DataProviderService")
+
+        # 对占位符名称（如可转债只显示代码）尝试用实时行情补全名称
+        placeholder_codes = [
+            code for code, name in name_map.items()
+            if not name or name == code or name.isdigit()
+        ]
+        if placeholder_codes:
+            try:
+                for i in range(0, len(placeholder_codes), 100):
+                    batch = placeholder_codes[i:i + 100]
+                    rt_df = self.provider.fetch_realtime_quote(batch)
+                    if rt_df is not None and len(rt_df) > 0 and "code" in rt_df.columns and "name" in rt_df.columns:
+                        for _, row in rt_df.iterrows():
+                            code = str(row.get("code", "")).strip().zfill(6)
+                            name = str(row.get("name", "")).strip()
+                            if code and name and not name.isdigit() and name != code:
+                                name_map[code] = name
+            except Exception as e:
+                self._obs.log("WARN", f"Failed to supplement placeholder names: {e}", "DataProviderService")
+
         self._stock_name_cache = (name_map, now)
         return name_map
 

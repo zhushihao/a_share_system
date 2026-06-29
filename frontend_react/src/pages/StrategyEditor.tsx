@@ -390,7 +390,7 @@ export default function StrategyEditor() {
                             <td className="py-2 px-3 text-slate-600">{trade.date}</td>
                             <td className="py-2 px-3">
                               <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
-                                trade.action === 'BUY' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                                trade.action === 'BUY' ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
                               }`}>
                                 {trade.action === 'BUY' ? '买入' : '卖出'}
                               </span>
