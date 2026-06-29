@@ -65,6 +65,10 @@ system_check_raw.*
 # GitHub Actions self-hosted runner (local installation)
 actions-runner/
 
+# Local utility tools (decompilers, debuggers, hardware utilities, etc.)
+# These should not be committed; keep them locally if needed.
+tools/
+
 # Temporary API test output files
 api_check_results.json
 backtest_strategies.json
