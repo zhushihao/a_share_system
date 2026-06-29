@@ -11,6 +11,7 @@ Data Provider Service - 行情数据服务层
 
 import sys
 import os
+import re
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Tuple
 import pandas as pd
@@ -37,6 +38,35 @@ except ImportError:
 
 # 用于 mootdx 超时控制的线程池
 _mootdx_fetch_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="mootdx_fetch")
+
+
+def _normalize_stock_name(name: str) -> str:
+    """
+    规范化股票名称：
+    1. 去除首尾空白
+    2. 全角空格（　）转为普通空格
+    3. 折叠连续空白为单个空格
+    """
+    if not name:
+        return ""
+    name = str(name).strip()
+    # 全角空格 -> 半角空格
+    name = name.replace("　", " ")
+    # 折叠连续空白
+    name = " ".join(name.split())
+    return name
+
+
+def _is_placeholder_name(name: str, code: str) -> bool:
+    """判断名称是否为占位符（如纯数字、与代码相同、省份+代码等）"""
+    if not name or name == code:
+        return True
+    if name.isdigit():
+        return True
+    # 常见占位符：省份+代码（如"湖北2521"）
+    if re.match(r"^[一-龥]{2,4}\d{4,6}$", name):
+        return True
+    return False
 
 # 缓存 key 版本：当复权等核心计算逻辑变更时，通过升级版本号让旧缓存失效
 CACHE_KEY_VERSION = "v3"
@@ -96,8 +126,8 @@ class DataProviderService:
             if df is not None and len(df) > 0 and "code" in df.columns and "name" in df.columns:
                 for _, row in df.iterrows():
                     code = str(row.get("code", "")).strip().zfill(6)
-                    name = str(row.get("name", "")).strip()
-                    if code and name:
+                    name = _normalize_stock_name(str(row.get("name", "")))
+                    if code and name and not _is_placeholder_name(name, code):
                         name_map[code] = name
         except Exception as e:
             self._obs.log("WARN", f"Failed to load stock name map: {e}", "DataProviderService")
@@ -115,8 +145,8 @@ class DataProviderService:
                     if rt_df is not None and len(rt_df) > 0 and "code" in rt_df.columns and "name" in rt_df.columns:
                         for _, row in rt_df.iterrows():
                             code = str(row.get("code", "")).strip().zfill(6)
-                            name = str(row.get("name", "")).strip()
-                            if code and name and not name.isdigit() and name != code:
+                            name = _normalize_stock_name(str(row.get("name", "")))
+                            if code and name and not _is_placeholder_name(name, code):
                                 name_map[code] = name
             except Exception as e:
                 self._obs.log("WARN", f"Failed to supplement placeholder names: {e}", "DataProviderService")

@@ -19,7 +19,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from backend.services.data_provider import get_data_provider_service
+from backend.services.data_provider import get_data_provider_service, _normalize_stock_name
 from backend.services.data_platform import get_data_platform_service
 from backend.config import settings
 
@@ -149,7 +149,7 @@ async def get_stock_list(
             code = str(row.get("code", ""))
             records.append({
                 "code": code,
-                "name": str(row.get("name", "")),
+                "name": _normalize_stock_name(str(row.get("name", ""))),
                 "market": _infer_market(code),
             })
 
@@ -196,7 +196,7 @@ async def search_stocks(
 
         for _, row in df.iterrows():
             row_code = str(row.get("code", "")).strip()
-            row_name = str(row.get("name", "")).strip()
+            row_name = _normalize_stock_name(str(row.get("name", "")))
 
             # 匹配条件：代码开头匹配 或 名称包含关键词
             if (row_code.startswith(q) or row_code.startswith(code_6) or

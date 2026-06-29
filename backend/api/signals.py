@@ -33,7 +33,7 @@ from backend.models.database import (
     get_signal_performance_stats,
     update_signal_status,
 )
-from backend.services.data_provider import get_data_provider_service
+from backend.services.data_provider import get_data_provider_service, _normalize_stock_name, _is_placeholder_name
 from backend.services.signal_engine import (
     get_signal_engine,
     SignalEngine,
@@ -174,8 +174,8 @@ async def list_signals(
             if stock_df is not None and len(stock_df) > 0 and "code" in stock_df.columns and "name" in stock_df.columns:
                 for _, row in stock_df.iterrows():
                     code = str(row.get("code", "")).zfill(6)
-                    name = str(row.get("name", "")).strip()
-                    if code and name and name != code:
+                    name = _normalize_stock_name(str(row.get("name", "")))
+                    if code and name and not _is_placeholder_name(name, code):
                         name_map[code] = name
         except Exception as e:
             logger = logging.getLogger("signals")
