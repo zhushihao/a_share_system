@@ -71,7 +71,7 @@ export default function DataManager() {
     setLoading(true)
     try {
       const data = await fetchStockList(stockMarket || undefined, 1000)
-      setStockList(data.stocks || [])
+      setStockList(data.items || [])
     } catch (e) {
       console.error('Failed to load stock list', e)
     } finally {

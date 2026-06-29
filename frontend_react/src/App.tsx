@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Watchlist from './pages/Watchlist'
 import StockDetail from './pages/StockDetail'
+import F10 from './pages/F10'
 import Settings from './pages/Settings'
 
 // 懒加载非首屏页面
@@ -22,6 +23,7 @@ function App() {
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/stock/:symbol" element={<StockDetail />} />
           <Route path="/quote/:symbol" element={<StockDetail />} />
+          <Route path="/f10/:symbol" element={<F10 />} />
           <Route path="/signals" element={<Signals />} />
           <Route path="/backtest" element={<Backtest />} />
           <Route path="/strategy-editor" element={<StrategyEditor />} />

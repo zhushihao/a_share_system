@@ -200,7 +200,11 @@ export async function fetchDataOverview() {
 
 export async function fetchStockList(market?: string, limit?: number) {
   const { data } = await apiClient.get('/data/stock-list', { params: { market, limit } })
-  return data
+  // 统一返回结构：后端使用 stocks，前端统一为 items
+  return {
+    ...data,
+    items: data.items || data.stocks || [],
+  }
 }
 
 export async function diagnoseData(symbol: string, period?: string) {
@@ -360,6 +364,11 @@ export async function fetchIntraday(symbol: string, date?: string) {
 
 export async function fetchProfile(symbol: string) {
   const { data } = await apiClient.get(`/quote/${symbol}/profile`)
+  return data
+}
+
+export async function fetchF10(symbol: string) {
+  const { data } = await apiClient.get(`/f10/${symbol}`)
   return data
 }
 

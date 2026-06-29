@@ -1,23 +1,25 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react'
-import { Link } from 'react-router-dom'
-import { Plus, Trash2, Upload, Download, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, Search, Check } from 'lucide-react'
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Plus, Trash2, Upload, Download, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, Search, Check, ExternalLink } from 'lucide-react'
 import { fetchWatchlist, addWatchlist, deleteWatchlist, updateWatchlistGroup, updateWatchlistGroupBatch, fetchWatchlistGroups, searchStocks } from '@/api/client'
 import type { WatchlistWithQuote } from '@/types'
 
-export default function Watchlist() {
+function Watchlist() {
   const [items, setItems] = useState<WatchlistWithQuote[]>([])
   const [groups, setGroups] = useState<string[]>([])
-  const [selectedGroup, setSelectedGroup] = useState<string>('')
+  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const [selectedGroup, setSelectedGroup] = useState<string>(searchParams.get('group') || '')
+  const [sortField, setSortField] = useState<string>(searchParams.get('sort') || '')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>((searchParams.get('dir') as 'asc' | 'desc') || 'desc')
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Array<{ code: string; name: string; market: string }>>([])
-  const [allStocks, setAllStocks] = useState<Array<{ code: string; name: string; market: string }>>([])
   const [showSearchDropdown, setShowSearchDropdown] = useState(false)
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [lastUpdated, setLastUpdated] = useState<string>('')
-  const [sortField, setSortField] = useState<string>('')
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
   const [filterQuery, setFilterQuery] = useState('')
   const [targetGroup, setTargetGroup] = useState(selectedGroup || '默认')
   const [togglingCodes, setTogglingCodes] = useState<Set<string>>(new Set())
@@ -29,22 +31,6 @@ export default function Watchlist() {
 
   const [searchLoading, setSearchLoading] = useState(false)
 
-  // 加载全市场股票列表（兜底离线搜索）
-  useEffect(() => {
-    async function loadStockList() {
-      try {
-        const resp = await fetch('/api/v1/data/stock-list?limit=20000')
-        const data = await resp.json()
-        if (data.stocks && data.stocks.length > 0) {
-          setAllStocks(data.stocks)
-        }
-      } catch (e) {
-        console.error('Failed to load stock list', e)
-      }
-    }
-    loadStockList()
-  }, [])
-
   const handleSearch = useCallback(async (query: string) => {
     if (!query || query.length < 2 || query.length > 20) {
       setSearchResults([])
@@ -53,37 +39,19 @@ export default function Watchlist() {
     }
     setSearchLoading(true)
     try {
-      // 优先走服务端全量搜索，避免本地 5000 条截断导致搜不到（如 300308 中际旭创）
+      // 搜索完全走服务端，避免加载 20000 条到内存
       const data = await searchStocks(query)
-      let matches = (data.stocks || []).slice(0, 10)
-
-      // 服务端不可用时回退到本地列表
-      if (!matches.length && allStocks.length > 0) {
-        const q = query.trim().toLowerCase()
-        matches = allStocks.filter((s) => {
-          const code = s.code.toLowerCase()
-          const name = s.name.toLowerCase()
-          return code.startsWith(q) || name.includes(q)
-        }).slice(0, 10)
-      }
-
+      const matches = (data.stocks || []).slice(0, 10)
       setSearchResults(matches)
-      setShowSearchDropdown(matches.length > 0)
+      setShowSearchDropdown(true)
     } catch (e) {
       console.error('Search failed', e)
-      // 兜底本地搜索
-      const q = query.trim().toLowerCase()
-      const matches = allStocks.filter((s) => {
-        const code = s.code.toLowerCase()
-        const name = s.name.toLowerCase()
-        return code.startsWith(q) || name.includes(q)
-      }).slice(0, 10)
-      setSearchResults(matches)
-      setShowSearchDropdown(matches.length > 0)
+      setSearchResults([])
+      setShowSearchDropdown(true)
     } finally {
       setSearchLoading(false)
     }
-  }, [allStocks])
+  }, [])
 
   const onSearchInputChange = (value: string) => {
     setSearchQuery(value)
@@ -178,15 +146,45 @@ export default function Watchlist() {
     setTargetGroup(selectedGroup || '默认')
   }, [selectedGroup])
 
-  // 定时刷新：每30秒刷新一次
+  // 分组/排序状态同步到 URL query params，刷新后保留
   useEffect(() => {
-    refreshTimerRef.current = setInterval(() => {
-      load()
-    }, 30000)
-    return () => {
+    const params = new URLSearchParams()
+    if (selectedGroup) params.set('group', selectedGroup)
+    if (sortField) {
+      params.set('sort', sortField)
+      params.set('dir', sortDirection)
+    }
+    setSearchParams(params, { replace: true })
+  }, [selectedGroup, sortField, sortDirection, setSearchParams])
+
+  // 定时刷新：每30秒刷新一次，页面不可见时暂停
+  useEffect(() => {
+    function startTimer() {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
+      refreshTimerRef.current = setInterval(() => {
+        load()
+      }, 30000)
+    }
+    function stopTimer() {
       if (refreshTimerRef.current) {
         clearInterval(refreshTimerRef.current)
+        refreshTimerRef.current = null
       }
+    }
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        stopTimer()
+      } else {
+        startTimer()
+        load()
+      }
+    }
+
+    startTimer()
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      stopTimer()
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [load])
 
@@ -264,6 +262,12 @@ export default function Watchlist() {
     }
   }
 
+  function handleRowClick(e: React.MouseEvent, symbol: string) {
+    const target = e.target as HTMLElement
+    if (target.closest('input, select, button, a')) return
+    navigate(`/stock/${symbol}`)
+  }
+
   function getSortIcon(field: string) {
     if (sortField !== field) return <ArrowUpDown size={14} className="text-slate-300 inline ml-1" />
     return sortDirection === 'asc'
@@ -271,16 +275,16 @@ export default function Watchlist() {
       : <ArrowDown size={14} className="text-sky-600 inline ml-1" />
   }
 
-  const filtered = items.filter((i) => {
+  const filtered = useMemo(() => items.filter((i) => {
     const matchGroup = selectedGroup ? i.group === selectedGroup : true
     if (!filterQuery.trim()) return matchGroup
     const q = filterQuery.trim().toLowerCase()
     const matchSearch =
       i.symbol.toLowerCase().includes(q) || (i.name || '').toLowerCase().includes(q)
     return matchGroup && matchSearch
-  })
+  }), [items, selectedGroup, filterQuery])
 
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
     if (!sortField) return 0
     let valA: number | string = 0
     let valB: number | string = 0
@@ -318,7 +322,7 @@ export default function Watchlist() {
       return sortDirection === 'asc' ? valA.localeCompare(valB as string) : (valB as string).localeCompare(valA)
     }
     return sortDirection === 'asc' ? (valA as number) - (valB as number) : (valB as number) - (valA as number)
-  })
+  }), [filtered, sortField, sortDirection])
 
   return (
     <div className="space-y-4">
@@ -468,6 +472,12 @@ export default function Watchlist() {
                 value={searchQuery}
                 onChange={(e) => onSearchInputChange(e.target.value)}
                 onFocus={() => { if (searchResults.length > 0) setShowSearchDropdown(true) }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchResults.length > 0) {
+                    navigate(`/stock/${searchResults[0].code}`)
+                    setShowSearchDropdown(false)
+                  }
+                }}
               />
               {searchLoading && (
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">搜索中...</span>
@@ -484,13 +494,26 @@ export default function Watchlist() {
                         key={stock.code}
                         className="w-full text-left px-3 py-2 hover:bg-slate-50 text-sm flex items-center justify-between border-b border-slate-50 last:border-0"
                       >
-                        <span>
+                        <Link
+                          to={`/stock/${stock.code}`}
+                          onClick={() => setShowSearchDropdown(false)}
+                          className="flex-1 flex items-center gap-2 min-w-0"
+                          title="查看个股详情"
+                        >
                           <span className="font-medium text-slate-700">{stock.code}</span>
-                          <span className="text-slate-400 mx-2">|</span>
-                          <span className="text-slate-600">{stock.name}</span>
-                        </span>
+                          <span className="text-slate-400">|</span>
+                          <span className="text-slate-600 truncate">{stock.name}</span>
+                        </Link>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-slate-400">{{ sh: '沪市', sz: '深市', bj: '北交所' }[stock.market] || stock.market}</span>
+                          <Link
+                            to={`/stock/${stock.code}`}
+                            onClick={() => setShowSearchDropdown(false)}
+                            className="p-1.5 rounded hover:bg-slate-100 text-slate-400 hover:text-sky-600"
+                            title="查看详情"
+                          >
+                            <ExternalLink size={14} />
+                          </Link>
                           <button
                             onClick={() => handleToggleStock(stock)}
                             disabled={busy}
@@ -590,7 +613,11 @@ export default function Watchlist() {
                 const checked = selectedSymbols.includes(item.symbol)
                 const groupOptions = Array.from(new Set([...(groups || []), item.group].filter(Boolean)))
                 return (
-                  <tr key={item.symbol} className="hover:bg-slate-50 transition">
+                  <tr
+                    key={item.symbol}
+                    className="hover:bg-slate-50 transition cursor-pointer"
+                    onClick={(e) => handleRowClick(e, item.symbol)}
+                  >
                     <td className="px-4 py-3">
                       <input
                         type="checkbox"
@@ -615,10 +642,10 @@ export default function Watchlist() {
                         {item.name}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-right font-medium">
+                    <td className="px-4 py-3 text-right font-medium font-mono">
                       {quote ? quote.close.toFixed(2) : '-'}
                     </td>
-                    <td className={`px-4 py-3 text-right font-medium ${changePct >= 0 ? 'text-up' : 'text-down'}`}>
+                    <td className={`px-4 py-3 text-right font-medium font-mono ${changePct >= 0 ? 'text-up' : 'text-down'}`}>
                       <span className="mr-1">{changePct >= 0 ? '▲' : '▼'}</span>
                       {changePct >= 0 ? '+' : ''}
                       {changePct.toFixed(2)}%
@@ -681,3 +708,5 @@ export default function Watchlist() {
     </div>
   )
 }
+
+export default React.memo(Watchlist)

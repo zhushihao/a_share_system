@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { TrendingUp, TrendingDown, Activity, Zap, Database, CheckCircle, AlertTriangle, XCircle } from 'lucide-react'
 import { fetchQuotesBatch, fetchMarketSentiment, fetchMarketHotspots, fetchDataHealth, fetchMarketOverview } from '@/api/client'
@@ -19,18 +19,22 @@ const INDEX_SYMBOLS = [
   { symbol: 'sh000688', name: '科创50' },
 ]
 
-function IndexCard({ name, close, change, changePct, volume, date }: { 
-  name: string; 
-  close: number; 
-  change: number; 
-  changePct: number; 
-  volume: number; 
+const IndexCard = React.memo(function IndexCard({ symbol, name, close, change, changePct, volume, date }: {
+  symbol: string;
+  name: string;
+  close: number;
+  change: number;
+  changePct: number;
+  volume: number;
   date: string;
 }) {
   const isUp = change >= 0
 
   return (
-    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">
+    <Link
+      to={`/stock/${symbol}`}
+      className="block bg-white rounded-xl p-4 shadow-sm border border-slate-200 hover:border-sky-300 hover:shadow-md transition focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50"
+    >
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm font-medium text-slate-600">{name}</span>
         {isUp ? (
@@ -50,11 +54,11 @@ function IndexCard({ name, close, change, changePct, volume, date }: {
       <div className="text-xs text-slate-400 mt-2">
         量: {formatVolume(volume)} · {date}
       </div>
-    </div>
+    </Link>
   )
-}
+})
 
-function MarketSentiment({ data, loading }: { data: any; loading: boolean }) {
+const MarketSentiment = React.memo(function MarketSentiment({ data, loading }: { data: any; loading: boolean }) {
   if (loading) {
     return (
       <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 animate-pulse">
@@ -82,8 +86,20 @@ function MarketSentiment({ data, loading }: { data: any; loading: boolean }) {
         <Activity size={18} className="text-sky-500" />
         <h3 className="font-semibold text-slate-700">市场情绪</h3>
         {data?.source && (
-          <span className={`text-xs px-2 py-0.5 rounded-full ${data.source === 'eastmoney' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
-            {data.source === 'eastmoney' ? '实时' : data.source === 'unavailable' ? '暂无数据（非交易时间）' : data.source}
+          <span className={`text-xs px-2 py-0.5 rounded-full ${
+              data.source === 'eastmoney'
+                ? 'bg-emerald-50 text-emerald-600'
+                : data.source === 'cache'
+                ? 'bg-amber-50 text-amber-600'
+                : 'bg-slate-100 text-slate-400'
+            }`}>
+            {data.source === 'eastmoney'
+              ? '实时'
+              : data.source === 'unavailable'
+              ? '暂无数据（非交易时间）'
+              : data.source === 'cache'
+              ? '缓存数据'
+              : data.source}
           </span>
         )}
       </div>
@@ -129,8 +145,9 @@ function MarketSentiment({ data, loading }: { data: any; loading: boolean }) {
     </div>
   )
 }
+)
 
-function HotBlocks({ data, loading }: { data: any[]; loading: boolean }) {
+const HotBlocks = React.memo(function HotBlocks({ data, loading }: { data: any[]; loading: boolean }) {
   if (loading) {
     return (
       <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 animate-pulse">
@@ -191,8 +208,9 @@ function HotBlocks({ data, loading }: { data: any[]; loading: boolean }) {
     </div>
   )
 }
+)
 
-function DataHealthPanel({ data, loading }: { data: any; loading: boolean }) {
+const DataHealthPanel = React.memo(function DataHealthPanel({ data, loading }: { data: any; loading: boolean }) {
   if (loading) {
     return (
       <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 animate-pulse">
@@ -278,8 +296,9 @@ function DataHealthPanel({ data, loading }: { data: any; loading: boolean }) {
     </div>
   )
 }
+)
 
-export default function Dashboard() {
+const Dashboard = React.memo(function Dashboard() {
   const [quotes, setQuotes] = useState<Record<string, StandardQuote>>({})
   const [sentiment, setSentiment] = useState<any>(null)
   const [hotspots, setHotspots] = useState<any[]>([])
@@ -345,29 +364,33 @@ export default function Dashboard() {
     loadHealth()
   }, [])
 
+  const indexCards = useMemo(() => {
+    if (indexLoading) {
+      return [1, 2, 3, 4].map((i) => (
+        <div key={i} className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 animate-pulse">
+          <div className="h-4 bg-slate-200 rounded w-20 mb-2" />
+          <div className="h-6 bg-slate-200 rounded w-24" />
+        </div>
+      ))
+    }
+    return indexData.map((idx) => (
+      <IndexCard
+        key={idx.code}
+        symbol={idx.code}
+        name={idx.name}
+        close={idx.close}
+        change={idx.change}
+        changePct={idx.change_pct}
+        volume={idx.volume}
+        date={idx.date}
+      />
+    ))
+  }, [indexLoading, indexData])
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {indexLoading ? (
-          [1, 2, 3, 4].map((i) => (
-            <div key={i} className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 animate-pulse">
-              <div className="h-4 bg-slate-200 rounded w-20 mb-2" />
-              <div className="h-6 bg-slate-200 rounded w-24" />
-            </div>
-          ))
-        ) : (
-          indexData.map((idx) => (
-            <IndexCard
-              key={idx.code}
-              name={idx.name}
-              close={idx.close}
-              change={idx.change}
-              changePct={idx.change_pct}
-              volume={idx.volume}
-              date={idx.date}
-            />
-          ))
-        )}
+        {indexCards}
       </div>
       {latestTradingDay && !indexLoading && (
         <div className="text-xs text-slate-400 -mt-2 mb-2">
@@ -404,4 +427,6 @@ export default function Dashboard() {
       </div>
     </div>
   )
-}
+})
+
+export default Dashboard

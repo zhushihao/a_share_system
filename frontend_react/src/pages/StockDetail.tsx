@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, TrendingUp, TrendingDown, Activity, Shield, Target, RefreshCw, Clock, BookOpen, BarChart3 } from 'lucide-react'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, TrendingUp, TrendingDown, Activity, Shield, Target, RefreshCw, Clock, BookOpen, BarChart3, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   fetchQuote,
   fetchOHLCV,
@@ -14,7 +14,8 @@ import {
   fetchProfile,
   fetchIntraday,
   fetchSettings,
-  fetchStockList,
+  searchStocks,
+  fetchWatchlist,
 } from '@/api/client'
 import TradingViewChart from '@/components/TradingViewChart'
 import IntradayChart from '@/components/IntradayChart'
@@ -82,9 +83,21 @@ export default function StockDetail() {
   const [period, setPeriod] = useState<'minute' | 'daily' | 'weekly' | 'monthly'>('daily')
   const [viewMode, setViewMode] = useState<'kline' | 'intraday'>('kline')
   const [adjustMode, setAdjustMode] = useState<string>('qfq')
-  const [stockNameMap, setStockNameMap] = useState<Record<string, string>>({})
+  const [watchlistSymbols, setWatchlistSymbols] = useState<string[]>([])
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const signalRef = useRef<HTMLDivElement>(null)
+  const [highlightSignal, setHighlightSignal] = useState(false)
 
-  // 加载用户默认复权设置
+  // 从信号列表跳转时高亮并滚动到交易信号区域
+  useEffect(() => {
+    if (searchParams.get('signal_id') && signalRef.current) {
+      setHighlightSignal(true)
+      signalRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const timer = setTimeout(() => setHighlightSignal(false), 3000)
+      return () => clearTimeout(timer)
+    }
+  }, [searchParams])
   useEffect(() => {
     fetchSettings()
       .then((settings) => {
@@ -96,28 +109,45 @@ export default function StockDetail() {
       .catch(() => {})
   }, [])
 
-  // 加载股票名称映射（用于 quote 降级兜底）
+  // 加载用户默认复权设置
   useEffect(() => {
-    async function loadNameMap() {
-      try {
-        const cached = localStorage.getItem('stock_name_map')
-        if (cached) {
-          setStockNameMap(JSON.parse(cached))
-          return
+    fetchSettings()
+      .then((settings) => {
+        if (settings?.default_adjust) {
+          setAdjustMode(settings.default_adjust)
         }
-        const data = await fetchStockList(undefined, 20000)
-        const map: Record<string, string> = {}
-        ;(data?.items || data?.data || data || []).forEach((s: any) => {
-          if (s?.code && s?.name) map[s.code] = s.name
-        })
-        setStockNameMap(map)
-        localStorage.setItem('stock_name_map', JSON.stringify(map))
+      })
+      .catch(() => {})
+  }, [])
+
+  // 加载当前自选股列表（用于上一只/下一只导航）
+  useEffect(() => {
+    async function loadWatchlist() {
+      try {
+        const data = await fetchWatchlist()
+        const symbols = (data?.items || []).map((s: any) => s.symbol).filter(Boolean)
+        setWatchlistSymbols(symbols)
       } catch (e) {
-        console.error('Failed to load stock name map', e)
+        console.error('Failed to load watchlist for navigation', e)
       }
     }
-    loadNameMap()
-  }, [])
+    loadWatchlist()
+  }, [symbol])
+
+  const currentIndex = symbol ? watchlistSymbols.indexOf(symbol) : -1
+  const prevSymbol = currentIndex > 0 ? watchlistSymbols[currentIndex - 1] : null
+  const nextSymbol = currentIndex >= 0 && currentIndex < watchlistSymbols.length - 1 ? watchlistSymbols[currentIndex + 1] : null
+
+  async function fetchStockName(symbol: string): Promise<string | null> {
+    try {
+      const data = await searchStocks(symbol)
+      const matches = data?.stocks || []
+      const exact = matches.find((s: any) => s?.code === symbol)
+      return exact?.name || matches[0]?.name || null
+    } catch (e) {
+      return null
+    }
+  }
 
   const loadData = useCallback(async () => {
     if (!symbol) return
@@ -140,10 +170,11 @@ export default function StockDetail() {
       // 降级：如果 fetchQuote 返回空，从 OHLCV 构造 quote
       let quote = q
       if (!quote && o.data && o.data.length > 0) {
+        const name = await fetchStockName(symbol)
         const latest = o.data[o.data.length - 1]
         quote = {
           symbol: symbol,
-          name: stockNameMap[symbol] || null,
+          name: name,
           timestamp: new Date().toISOString(),
           open: latest.open || 0,
           high: latest.high || 0,
@@ -176,22 +207,41 @@ export default function StockDetail() {
       setIsRefreshing(false)
       setLoading(false)
     }
-  }, [symbol, period, adjustMode, stockNameMap])
+  }, [symbol, period, adjustMode])
 
   // 初始加载
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  // 定时刷新：每30秒刷新一次
+  // 定时刷新：每30秒刷新一次，页面不可见时暂停
   useEffect(() => {
-    refreshTimerRef.current = setInterval(() => {
-      loadData()
-    }, 30000)
-    return () => {
+    function startTimer() {
+      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current)
+      refreshTimerRef.current = setInterval(() => {
+        loadData()
+      }, 30000)
+    }
+    function stopTimer() {
       if (refreshTimerRef.current) {
         clearInterval(refreshTimerRef.current)
+        refreshTimerRef.current = null
       }
+    }
+    function handleVisibilityChange() {
+      if (document.hidden) {
+        stopTimer()
+      } else {
+        startTimer()
+        loadData()
+      }
+    }
+
+    startTimer()
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      stopTimer()
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [loadData])
 
@@ -226,14 +276,37 @@ export default function StockDetail() {
             </div>
           </div>
         </div>
-        <button
-          onClick={loadData}
-          disabled={isRefreshing}
-          className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition disabled:opacity-50"
-        >
-          <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
-          {isRefreshing ? '刷新中...' : '刷新'}
-        </button>
+        <div className="flex items-center gap-2">
+          {currentIndex >= 0 && (
+            <span className="text-xs text-slate-400 hidden sm:inline">
+              自选股 {currentIndex + 1}/{watchlistSymbols.length}
+            </span>
+          )}
+          <button
+            onClick={() => prevSymbol && navigate(`/stock/${prevSymbol}`)}
+            disabled={!prevSymbol}
+            className="p-2 hover:bg-slate-100 rounded-lg transition disabled:opacity-30 disabled:cursor-not-allowed"
+            title="上一只"
+          >
+            <ChevronLeft size={20} className="text-slate-500" />
+          </button>
+          <button
+            onClick={() => nextSymbol && navigate(`/stock/${nextSymbol}`)}
+            disabled={!nextSymbol}
+            className="p-2 hover:bg-slate-100 rounded-lg transition disabled:opacity-30 disabled:cursor-not-allowed"
+            title="下一只"
+          >
+            <ChevronRight size={20} className="text-slate-500" />
+          </button>
+          <button
+            onClick={loadData}
+            disabled={isRefreshing}
+            className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 transition disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+            {isRefreshing ? '刷新中...' : '刷新'}
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -243,10 +316,10 @@ export default function StockDetail() {
             <span className="text-sm text-slate-500">最新价</span>
             {isUp ? <TrendingUp size={20} className="text-up" /> : <TrendingDown size={20} className="text-down" />}
           </div>
-          <div className={`text-3xl font-bold ${isUp ? 'text-up' : 'text-down'}`}>
+          <div className={`text-3xl font-bold font-mono ${isUp ? 'text-up' : 'text-down'}`}>
             {quote.close.toFixed(2)}
           </div>
-          <div className={`text-sm mt-2 ${isUp ? 'text-up' : 'text-down'}`}>
+          <div className={`text-sm mt-2 font-mono ${isUp ? 'text-up' : 'text-down'}`}>
             {change >= 0 ? '+' : ''}
             {change.toFixed(2)} ({changePct >= 0 ? '+' : ''}
             {changePct.toFixed(2)}%)
@@ -254,19 +327,19 @@ export default function StockDetail() {
           <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-slate-100">
             <div>
               <div className="text-xs text-slate-400">今开</div>
-              <div className="text-sm font-medium">{quote.open.toFixed(2)}</div>
+              <div className="text-sm font-medium font-mono">{quote.open.toFixed(2)}</div>
             </div>
             <div>
               <div className="text-xs text-slate-400">最高</div>
-              <div className="text-sm font-medium">{quote.high.toFixed(2)}</div>
+              <div className="text-sm font-medium font-mono">{quote.high.toFixed(2)}</div>
             </div>
             <div>
               <div className="text-xs text-slate-400">最低</div>
-              <div className="text-sm font-medium">{quote.low.toFixed(2)}</div>
+              <div className="text-sm font-medium font-mono">{quote.low.toFixed(2)}</div>
             </div>
             <div>
               <div className="text-xs text-slate-400">成交量</div>
-              <div className="text-sm font-medium">{formatVolume(quote.volume)}</div>
+              <div className="text-sm font-medium font-mono">{formatVolume(quote.volume)}</div>
             </div>
           </div>
 
@@ -309,9 +382,17 @@ export default function StockDetail() {
         {/* F10 基本信息 */}
         {profile && profile.data && (
           <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
-            <div className="flex items-center gap-2 mb-4">
-              <BookOpen size={18} className="text-blue-600" />
-              <h3 className="font-semibold text-slate-700">F10 基本信息</h3>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <BookOpen size={18} className="text-blue-600" />
+                <h3 className="font-semibold text-slate-700">F10 基本信息</h3>
+              </div>
+              <Link
+                to={`/f10/${symbol}`}
+                className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+              >
+                查看完整 F10 →
+              </Link>
             </div>
             <div className="space-y-2 text-sm">
               {Object.entries(profile.data).slice(0, 10).map(([key, value]) => (
@@ -325,7 +406,12 @@ export default function StockDetail() {
         )}
 
         {/* 交易信号 */}
-        <div className="bg-white rounded-xl p-5 shadow-sm border border-slate-200">
+        <div
+          ref={signalRef}
+          className={`bg-white rounded-xl p-5 shadow-sm border transition ${
+            highlightSignal ? 'border-sky-500 ring-2 ring-sky-200' : 'border-slate-200'
+          }`}
+        >
           <h3 className="font-semibold text-slate-700 mb-4">交易信号</h3>
           {signal ? (
             <div className="space-y-3">
@@ -846,7 +932,7 @@ export default function StockDetail() {
                       <td className="px-3 py-2 text-right">{row.high.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right">{row.low.toFixed(2)}</td>
                       <td className="px-3 py-2 text-right font-medium">{row.close.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right">{formatVolume(row.volume)}</td>
+                      <td className="px-3 py-2 text-right font-mono">{formatVolume(row.volume)}</td>
                       <td className={`px-3 py-2 text-right ${rowChange >= 0 ? 'text-up' : 'text-down'}`}>
                         {rowChange >= 0 ? '+' : ''}
                         {rowChange.toFixed(2)}%
