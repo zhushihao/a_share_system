@@ -88,6 +88,67 @@ def _find_section(text: str, header: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _severity_to_priority(severity: str) -> str:
+    """把报告中的严重程度/emoji映射到 P0-P3"""
+    severity = severity.lower()
+    if any(k in severity for k in ("critical", "严重", "p0", "🔴")):
+        return "P0"
+    if any(k in severity for k in ("high", "高", "p1", "🟠")):
+        return "P1"
+    if any(k in severity for k in ("medium", "中", "p2", "🟡")):
+        return "P2"
+    if any(k in severity for k in ("low", "低", "p3", "🟢")):
+        return "P3"
+    return "P2"
+
+
+def _extract_inline_files(block: str) -> List[str]:
+    """从问题块中提取所有代码路径（支持 `path`、**涉及文件**、位置等）"""
+    files: List[str] = []
+    # 先尝试显式的“涉及文件”字段
+    file_section_match = re.search(r"[-*]\s*[*_]*涉及文件[*_]*[：:]\s*(.+?)(?=\n\s*[-*]|\n\s*###|\n\s*##|\Z)", block, re.S)
+    if file_section_match:
+        file_text = file_section_match.group(1)
+        for line in file_text.splitlines():
+            line = line.strip().strip(",;，")
+            if not line:
+                continue
+            path_match = re.search(r"([a-zA-Z0-9_\-./]+(?:\.[a-zA-Z0-9]+)?)", line)
+            if path_match:
+                candidate = path_match.group(1)
+                if "/" in candidate or "\\" in candidate or "." in candidate:
+                    files.append(candidate)
+
+    # 再在整个块里收集所有看起来像项目文件路径的字符串
+    for match in re.finditer(r"`([a-zA-Z0-9_\-./]+(?:\.[a-zA-Z0-9_\-]+)+)`", block):
+        candidate = match.group(1)
+        if candidate.startswith(("backend/", "frontend_react/", "reports/", "scripts/", "./")):
+            files.append(candidate)
+
+    # 去重并规范化
+    normalized: List[str] = []
+    for f in files:
+        f = f.replace("\\", "/").strip().lstrip("./")
+        if f and f not in normalized:
+            normalized.append(f)
+    return normalized
+
+
+def _split_issues(section: str) -> List[str]:
+    """把问题章节拆成单个问题块，支持多种标题格式"""
+    # 格式1: ### 1. 标题
+    # 格式2: ### 🔴 P0 - 标题
+    # 格式3: **1. 标题** 🟠 High
+    patterns = [
+        r"\n(?=###\s*\d+\.\s+[^\n]+)",
+        r"\n(?=###\s*(?:[🔴🟠🟡🟢]\s*)?P\d+(?:\s*[-–:]\s*\d+)?\s*[-–:]\s*[^\n]+)",
+        r"\n(?=\*\*\d+\.\s+[^\n]+?\*\*\s*(?:[🔴🟠🟡🟢]|\([^\)]+\))?)",
+    ]
+    combined = "|".join(patterns)
+    blocks = re.split(combined, section)
+    return [b.strip() for b in blocks if b.strip()]
+
+
 def parse_issues(report_path: Path) -> List[Dict]:
     """
     解析报告中的问题列表，返回按 P0→P1→P2 排序的字典列表。
@@ -103,69 +164,52 @@ def parse_issues(report_path: Path) -> List[Dict]:
     else:
         return []
 
-    # 问题通常以以下格式开头：
-    # ### 🔴 P0 - 标题
-    # ### 1. 🔴 P0 - 标题
-    # ### P2 - 1: 标题
-    # ### P0 - 标题
-    issue_blocks = re.split(r"\n(?=###\s*(?:\d+\.\s*)?(?:[🔴🟠🟡🟢]\s*)?P\d+(?:\s*[-–:]\s*\d+)?)", section)
-
     priority_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     issues: List[Dict] = []
 
-    for block in issue_blocks:
-        block = block.strip()
-        if not block:
-            continue
-
-        # 提取优先级和标题
-        header_match = re.match(
-            r"###\s*(?:\d+\.\s*)?(?:[🔴🟠🟡🟢]\s*)?(P\d+)(?:\s*[-–:]\s*\d+)?\s*[-–:]\s*(.+)",
-            block,
-        )
-        if not header_match:
-            continue
-
-        priority = header_match.group(1).upper()
-        title = header_match.group(2).strip()
-
-        # 提取涉及文件（支持 **涉及文件**： 或 涉及文件： 格式）
-        files = []
-        file_section_match = re.search(r"[-*]\s*[*_]*涉及文件[*_]*[：:]\s*(.+?)(?=\n\s*[-*]|\n\s*###|\Z)", block, re.S)
-        if file_section_match:
-            file_text = file_section_match.group(1)
-            # 支持多行文件列表
-            for line in file_text.splitlines():
-                line = line.strip().strip(",;，")
-                if not line:
+    for block in _split_issues(section):
+        # 格式1: ### 1. 标题 （可能后面带 🟠 High）
+        m = re.match(r"###\s*(\d+)\.\s*(.+?)(?:\s*([🔴🟠🟡🟢])\s*(Critical|High|Medium|Low|严重|高|中|低|P\d+))?\s*$", block, re.S)
+        if m:
+            title = m.group(2).strip()
+            severity = m.group(4) or m.group(3) or ""
+            priority = _severity_to_priority(severity)
+        else:
+            # 格式2: ### 🔴 P0 - 标题
+            m = re.match(
+                r"###\s*(?:\d+\.\s*)?(?:[🔴🟠🟡🟢]\s*)?(P\d+)(?:\s*[-–:]\s*\d+)?\s*[-–:]\s*(.+?)(?:\s*[🔴🟠🟡🟢]\s*(Critical|High|Medium|Low|严重|高|中|低))?\s*$",
+                block,
+                re.S,
+            )
+            if m:
+                priority = m.group(1).upper()
+                title = m.group(2).strip()
+            else:
+                # 格式3: **1. 标题** 🟠 High
+                m = re.match(
+                    r"\*\*(\d+)\.\s*(.+?)\*\*\s*(?:([🔴🟠🟡🟢])\s*(Critical|High|Medium|Low|严重|高|中|低|P\d+)|\(([^\)]+)\))?",
+                    block,
+                    re.S,
+                )
+                if not m:
                     continue
-                # 取路径部分
-                path_match = re.search(r"([a-zA-Z0-9_\-./]+(?:\.[a-zA-Z0-9]+)?)", line)
-                if path_match:
-                    candidate = path_match.group(1)
-                    if "/" in candidate or "\\" in candidate or "." in candidate:
-                        files.append(candidate)
+                title = m.group(2).strip()
+                severity = m.group(4) or m.group(5) or m.group(3) or ""
+                priority = _severity_to_priority(severity)
 
-        # 提取建议修复
-        fix_match = re.search(r"[-*]\s*[*_]*建议修复[*_]*[：:]\s*(.+?)(?=\n\s*[-*]|\n\s*###|\Z)", block, re.S)
+        files = _extract_inline_files(block)
+
+        fix_match = re.search(r"[-*]\s*[*_]*建议修复[*_]*[：:]\s*(.+?)(?=\n\s*[-*]|\n\s*###|\n\s*##|\Z)", block, re.S)
         fix_suggestion = fix_match.group(1).strip() if fix_match else ""
 
-        # 提取验证步骤
-        verify_match = re.search(r"[-*]\s*[*_]*验证步骤[*_]*[：:]\s*(.+?)(?=\n\s*[-*]|\n\s*###|\Z)", block, re.S)
+        verify_match = re.search(r"[-*]\s*[*_]*验证步骤[*_]*[：:]\s*(.+?)(?=\n\s*[-*]|\n\s*###|\n\s*##|\Z)", block, re.S)
         verification = verify_match.group(1).strip() if verify_match else ""
-
-        # 去重并规范化文件路径
-        normalized_files = []
-        for f in files:
-            f = f.replace("\\", "/").strip()
-            if f and f not in normalized_files:
-                normalized_files.append(f)
 
         issues.append({
             "priority": priority,
             "title": title,
             "description": block,
-            "files": normalized_files,
+            "files": files,
             "fix_suggestion": fix_suggestion,
             "verification": verification,
         })
