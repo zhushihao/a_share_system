@@ -20,6 +20,11 @@ from backend.services.multi_period_resonance import analyze_resonance
 
 router = APIRouter()
 
+# 大盘概览响应缓存（60秒）
+_market_overview_cache: Optional[dict] = None
+_market_overview_cache_time: Optional[datetime] = None
+_MARKET_OVERVIEW_CACHE_TTL = 60
+
 
 # 技术指标中文标签
 INDICATOR_LABELS = {
@@ -883,6 +888,266 @@ async def get_stock_profile(symbol: str):
     }
 
 
+# F10 字段标准化映射：将 mootdx 返回的原始字段名统一为前端期望的字段名
+F10_FIELD_MAP = {
+    # 中文原始字段 -> 标准化英文键
+    "市盈率": "pe",
+    "市净率": "pb",
+    "每股收益": "eps",
+    "每股净资产": "bvps",
+    "净资产收益率": "roe",
+    "营业收入": "revenue",
+    "净利润": "profit",
+    "所属行业": "industry",
+    "总股本": "total_capital",
+    "流通股本": "circulating_capital",
+    "股息率": "dividend",
+    "总市值": "market_cap",
+    "流通市值": "circulating_market_cap",
+    "换手率": "turnover_rate",
+    "振幅": "amplitude",
+    "量比": "volume_ratio",
+    "5分钟涨幅": "fiv_min_rise",
+    "股票名称": "name",
+    "股票代码": "symbol",
+    "所属市场": "market",
+    # akshare 估值分析字段
+    "PE(TTM)": "pe",
+    "PE(静)": "pe",
+    "A股简称": "name",
+}
+
+# 标准化 F10 字段：确保返回统一的字段名
+F10_STANDARD_FIELDS = [
+    "symbol", "name", "market", "industry",
+    "pe", "pb", "eps", "bvps", "roe",
+    "revenue", "profit", "dividend",
+    "total_capital", "circulating_capital",
+    "market_cap", "circulating_market_cap",
+    "turnover_rate", "amplitude", "volume_ratio",
+    "fiv_min_rise",
+]
+
+
+def _normalize_f10_data(raw_data: dict, symbol: str) -> dict:
+    """将原始 F10 数据标准化为统一格式"""
+    result = {}
+    # 先处理原始数据中的中文键
+    for key, value in raw_data.items():
+        normalized_key = F10_FIELD_MAP.get(key, key)
+        result[normalized_key] = value
+
+    # 确保 symbol 存在
+    if "symbol" not in result:
+        result["symbol"] = symbol
+
+    # 填充缺失字段为 null
+    for field in F10_STANDARD_FIELDS:
+        if field not in result:
+            result[field] = None
+
+    return result
+
+
+def _to_python(value):
+    """将 pandas/numpy 标量转换为原生 Python 类型，便于 JSON 序列化。"""
+    if value is None:
+        return None
+    if isinstance(value, (int, float, str, bool)):
+        return value
+    # 处理 numpy/pandas 标量
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _fetch_f10_from_akshare(symbol: str) -> Optional[dict]:
+    """使用 akshare 获取估值/基本面数据作为 F10 降级源"""
+    try:
+        import akshare as ak
+        import pandas as pd
+
+        value_df = ak.stock_value_em(symbol)
+        profile_df = ak.stock_profile_cninfo(symbol)
+
+        if (value_df is None or value_df.empty) and (profile_df is None or profile_df.empty):
+            return None
+
+        value_row = value_df.iloc[-1] if value_df is not None and not value_df.empty else {}
+        profile_row = profile_df.iloc[0] if profile_df is not None and not profile_df.empty else {}
+
+        market = "sh" if symbol.startswith("6") else "sz" if symbol.startswith(("0", "3")) else "bj"
+        name = profile_row.get("A股简称") if isinstance(profile_row, pd.Series) else None
+
+        return {
+            "symbol": symbol,
+            "name": _to_python(name),
+            "market": market,
+            "industry": _to_python(profile_row.get("所属行业") if isinstance(profile_row, pd.Series) else None),
+            "pe": _to_python(value_row.get("PE(TTM)") if isinstance(value_row, pd.Series) else None),
+            "pb": _to_python(value_row.get("市净率") if isinstance(value_row, pd.Series) else None),
+            "total_capital": _to_python(value_row.get("总股本") if isinstance(value_row, pd.Series) else None),
+            "circulating_capital": _to_python(value_row.get("流通股本") if isinstance(value_row, pd.Series) else None),
+            "market_cap": _to_python(value_row.get("总市值") if isinstance(value_row, pd.Series) else None),
+            "circulating_market_cap": _to_python(value_row.get("流通市值") if isinstance(value_row, pd.Series) else None),
+        }
+    except Exception:
+        return None
+
+
+def _normalize_f10_symbol(symbol: str) -> str:
+    """统一 F10  symbol：剥离 .SZ/.SH/.BJ 等后缀并补齐 6 位数字。"""
+    raw = symbol.strip().upper()
+    for suffix in (".SZ", ".SH", ".BJ"):
+        if raw.endswith(suffix):
+            raw = raw[: -len(suffix)]
+    return raw.zfill(6)
+
+
+async def _get_f10(symbol: str) -> dict:
+    """内部 F10 查询实现，返回统一的响应结构。"""
+    symbol = _normalize_f10_symbol(symbol)
+    provider = _get_provider()
+
+    # 尝试 mootdx F10
+    try:
+        if not getattr(provider.provider._realtime, "_initialized", False):
+            provider.provider._realtime._init_client()
+        client = getattr(provider.provider._realtime, "_client", None)
+        if client is not None:
+            f10 = client.F10(symbol=symbol)
+            if f10 is not None and isinstance(f10, dict):
+                fixed = _fix_gbk_value(f10)
+                if not isinstance(fixed, dict):
+                    fixed = {"data": fixed}
+                # 如果 mootdx 返回嵌套结构，提取 data 层
+                raw_data = fixed.get("data", fixed) if isinstance(fixed, dict) else fixed
+                if not isinstance(raw_data, dict):
+                    raw_data = {}
+                normalized = _normalize_f10_data(raw_data, symbol)
+                # 仅当解析出有效基本面字段时才直接返回；否则继续降级到 akshare
+                has_profile = normalized.get("name") and normalized.get("market")
+                has_finance = normalized.get("pe") is not None or normalized.get("pb") is not None
+                if has_profile or has_finance:
+                    return {
+                        "symbol": symbol,
+                        "source": "mootdx-F10",
+                        "data": normalized,
+                    }
+    except Exception:
+        pass
+
+    # 降级 1：akshare 估值/行业数据
+    try:
+        akshare_data = _fetch_f10_from_akshare(symbol)
+        if akshare_data:
+            if not akshare_data.get("name") or akshare_data["name"] == symbol:
+                try:
+                    q = provider.get_stock_quote(symbol)
+                    if q and q.name:
+                        akshare_data["name"] = q.name
+                except Exception:
+                    pass
+            normalized = _normalize_f10_data(akshare_data, symbol)
+            return {
+                "symbol": symbol,
+                "source": "akshare",
+                "data": normalized,
+            }
+    except Exception:
+        pass
+
+    # 降级 2：从股票列表获取基本信息
+    try:
+        stock_list = provider.fetch_stock_list()
+        name = None
+        if stock_list is not None and len(stock_list) > 0:
+            code_col = "code" if "code" in stock_list.columns else stock_list.columns[0]
+            match = stock_list[stock_list[code_col].astype(str).str.strip().str.zfill(6) == symbol.zfill(6)]
+            if len(match) > 0:
+                row = match.iloc[0]
+                name = str(row.get("name", "")).strip()
+        # 如果 stock_list 没有名称，尝试从 quote 获取
+        if not name or name == symbol:
+            try:
+                q = provider.get_stock_quote(symbol)
+                if q and q.name:
+                    name = q.name
+            except Exception:
+                pass
+        market = "sh" if symbol.startswith("6") else "sz" if symbol.startswith(("0", "3")) else "bj"
+        fallback_data = _normalize_f10_data({
+            "symbol": symbol,
+            "name": name or symbol,
+            "market": market,
+        }, symbol)
+        return {
+            "symbol": symbol,
+            "source": "stock_list_fallback",
+            "data": fallback_data,
+        }
+    except Exception:
+        pass
+
+    # 最终降级
+    minimal_data = _normalize_f10_data({"symbol": symbol}, symbol)
+    return {
+        "symbol": symbol,
+        "source": "minimal",
+        "data": minimal_data,
+    }
+
+
+@router.get("/f10/{symbol}")
+async def get_f10(symbol: str):
+    """
+    获取个股 F10 基本面数据（标准化格式）
+
+    优先调用 mootdx F10 接口；若不可用则降级到 akshare 估值/行业数据；
+    仍不可用再降级到股票列表基本信息。返回 JSON 包含股票代码、名称、市场以及
+    pe、pb、roe、revenue、profit 等字段，缺失字段填 null。
+
+    支持 symbol 带市场后缀（如 002384.SZ）或不带后缀（002384）。
+    """
+    return await _get_f10(symbol)
+
+
+@router.get("/f10/{symbol}/profile")
+async def get_f10_profile(symbol: str):
+    """获取个股公司概况（symbol 支持 .SZ/.SH/.BJ 后缀）。"""
+    full = await _get_f10(symbol)
+    data = full.get("data", {})
+    profile = {
+        "symbol": data.get("symbol"),
+        "name": data.get("name"),
+        "market": data.get("market"),
+        "industry": data.get("industry"),
+    }
+    return {"symbol": data.get("symbol"), "source": full.get("source"), "data": profile}
+
+
+@router.get("/f10/{symbol}/finance")
+async def get_f10_finance(symbol: str):
+    """获取个股财务/估值指标（symbol 支持 .SZ/.SH/.BJ 后缀）。"""
+    full = await _get_f10(symbol)
+    data = full.get("data", {})
+    finance = {
+        "pe": data.get("pe"),
+        "pb": data.get("pb"),
+        "eps": data.get("eps"),
+        "bvps": data.get("bvps"),
+        "roe": data.get("roe"),
+        "revenue": data.get("revenue"),
+        "profit": data.get("profit"),
+        "dividend": data.get("dividend"),
+        "total_capital": data.get("total_capital"),
+        "circulating_capital": data.get("circulating_capital"),
+        "market_cap": data.get("market_cap"),
+        "circulating_market_cap": data.get("circulating_market_cap"),
+    }
+    return {"symbol": data.get("symbol"), "source": full.get("source"), "data": finance}
+
+
 @router.get("/quote/{symbol}/orderbook")
 async def get_orderbook(symbol: str):
     """
@@ -949,13 +1214,23 @@ async def get_market_overview():
 
     返回上证指数、深证成指、创业板指等核心指数的最新行情，
     以及市场情绪指标（涨跌家数、涨跌比、涨停跌停数）。
+    结果缓存 60 秒以降低重复计算开销。
     """
+    global _market_overview_cache, _market_overview_cache_time
+    now = datetime.now()
+    if (
+        _market_overview_cache is not None
+        and _market_overview_cache_time is not None
+        and (now - _market_overview_cache_time).total_seconds() < _MARKET_OVERVIEW_CACHE_TTL
+    ):
+        return {**_market_overview_cache, "timestamp": now.isoformat(), "cached": True}
+
     from backend.services.data_provider import get_data_provider_service
     from backend.services.data_platform import get_data_platform_service
 
     platform = get_data_provider_service()
     data_platform = get_data_platform_service()
-    
+
     indices = [
         {"code": "sh000001", "name": "上证指数", "key": "sh"},
         {"code": "sz399001", "name": "深证成指", "key": "sz"},
@@ -1032,13 +1307,17 @@ async def get_market_overview():
         except ValueError:
             latest_trading_day = None
 
-    return {
+    result = {
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
         "latest_trading_day": latest_trading_day,
         "indices": results,
         "sentiment": sentiment,
     }
+
+    _market_overview_cache = result
+    _market_overview_cache_time = datetime.now()
+    return result
 
 
 @router.get("/market/index/{index_code}")

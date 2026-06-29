@@ -28,6 +28,41 @@ router = APIRouter()
 # 线程池用于并行计算指标（IO + CPU 密集型）
 _indicator_executor = ThreadPoolExecutor(max_workers=4)
 
+# 评分缓存：{symbol: (score, cached_at)}
+_score_cache: Dict[str, Any] = {}
+_SCORE_CACHE_TTL = 60  # 60 秒
+
+# 行情缓存：{tuple(symbols): (quotes, cached_at)}
+_quote_cache: Dict[Any, Any] = {}
+_QUOTE_CACHE_TTL = 5  # 5 秒
+
+
+def _get_cached_realtime_quotes(provider: DataProviderService, symbols: List[str]) -> List[Any]:
+    """带 TTL 的批量行情缓存，避免重复请求拖慢 with-quotes"""
+    now = datetime.now()
+    key = tuple(sorted(symbols))
+    cached = _quote_cache.get(key)
+    if cached is not None:
+        quotes, cached_at = cached
+        if (now - cached_at).total_seconds() < _QUOTE_CACHE_TTL:
+            return quotes
+    quotes = provider.fetch_realtime_quotes(symbols)
+    _quote_cache[key] = (quotes, now)
+    return quotes
+
+
+def _get_cached_score(provider: DataProviderService, symbol: str) -> int:
+    """带缓存的股票评分计算"""
+    now = datetime.now()
+    cached = _score_cache.get(symbol)
+    if cached is not None:
+        score, cached_at = cached
+        if (now - cached_at).total_seconds() < _SCORE_CACHE_TTL:
+            return score
+    score = _compute_single_score(provider, symbol)
+    _score_cache[symbol] = (score, now)
+    return score
+
 
 def _offline_quote_to_dict(provider: DataProviderService, symbol: str, name: Optional[str] = None) -> dict:
     """从离线K线获取最新行情，转为 dict"""
@@ -233,8 +268,8 @@ async def list_watchlist_with_quotes(group: Optional[str] = None):
         
         symbols = [item.symbol for item in items]
         
-        # 1. 批量获取实时行情（一次 IO）
-        quotes = provider.fetch_realtime_quotes(symbols)
+        # 1. 批量获取实时行情（一次 IO），带 5 秒缓存
+        quotes = _get_cached_realtime_quotes(provider, symbols)
         quote_map = {q.symbol: q.model_dump() for q in quotes}
 
         # 1.1 如果实时行情为空，逐个用离线数据补充（确保自选股有行情显示）
@@ -251,10 +286,10 @@ async def list_watchlist_with_quotes(group: Optional[str] = None):
             if q and not q.get("name") and item.name:
                 q["name"] = item.name
         
-        # 2. 并行计算评分（CPU 密集型，使用线程池）
+        # 2. 并行计算评分（CPU 密集型，使用线程池），优先读取缓存
         loop = asyncio.get_event_loop()
         score_tasks = [
-            loop.run_in_executor(_indicator_executor, _compute_single_score, provider, item.symbol)
+            loop.run_in_executor(_indicator_executor, _get_cached_score, provider, item.symbol)
             for item in items
         ]
         scores = await asyncio.gather(*score_tasks)

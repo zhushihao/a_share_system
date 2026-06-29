@@ -7,7 +7,8 @@ v1.0 - 全新后端，不依赖旧系统
 
 import os
 import sys
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -63,6 +64,97 @@ except ImportError:
     from backend.services.onboarding import get_onboarding_service
 
 
+def _next_half_hour_tick():
+    """计算下一个整点或半点（本地时间）"""
+    now = datetime.now()
+    minutes = (now.minute // 30 + 1) * 30
+    next_tick = now.replace(minute=0, second=5, microsecond=0) + timedelta(minutes=minutes)
+    return next_tick
+
+
+async def _delayed_full_scan(scan_func):
+    """启动后延迟 60 秒执行一次全市场扫描，避免与启动流程竞争资源。"""
+    await asyncio.sleep(60)
+    await scan_func()
+
+
+async def _scheduled_signal_scan_loop():
+    """定时扫描信号任务
+
+    - 启动后立即扫描一次自选股，避免服务重启后等待过久
+    - 每 30 分钟扫描一次自选股
+    - 每日 09:35、15:05 执行全市场扫描，补齐非自选股的最新信号
+    """
+    from backend.api.signals import scan_signals, SignalScanRequest
+    from backend.models.database import init_db, DATABASE_PATH, get_watchlist
+    from backend.config import logger
+    from backend.services.data_provider import get_data_provider_service
+
+    async def _scan_watchlist():
+        conn = await init_db(DATABASE_PATH)
+        try:
+            items = await get_watchlist(conn)
+            symbols = [getattr(item, "symbol", item.get("symbol")) for item in items]
+            symbols = [s for s in symbols if s]
+            if symbols:
+                logger.info(f"[scheduler] 开始扫描 {len(symbols)} 只自选股信号")
+                await scan_signals(SignalScanRequest(symbols=symbols))
+                logger.info("[scheduler] 自选股信号扫描完成")
+            return symbols
+        finally:
+            await conn.close()
+
+    async def _scan_all_stocks(chunk_size: int = 500):
+        try:
+            provider = get_data_provider_service()
+            stock_list = provider.fetch_stock_list()
+            if stock_list is None or len(stock_list) == 0:
+                logger.warning("[scheduler] 全市场扫描：无法获取股票列表")
+                return
+            code_col = "code" if "code" in stock_list.columns else stock_list.columns[0]
+            symbols = stock_list[code_col].astype(str).str.strip().str.zfill(6).tolist()
+            # 排除指数/基金等过长的代码，仅保留 6 位 A 股
+            symbols = [s for s in symbols if s.isdigit() and len(s) == 6]
+            total = len(symbols)
+            logger.info(f"[scheduler] 开始全市场扫描，共 {total} 只股票，分 {chunk_size} 只/批")
+            for i in range(0, total, chunk_size):
+                chunk = symbols[i:i + chunk_size]
+                try:
+                    await scan_signals(SignalScanRequest(symbols=chunk))
+                    logger.info(f"[scheduler] 全市场扫描进度 {min(i + chunk_size, total)}/{total}")
+                except Exception as e:
+                    logger.warning(f"[scheduler] 全市场扫描批次失败 ({i}-{i+chunk_size}): {e}")
+                # 每批之间让出事件循环，避免长时间阻塞
+                await asyncio.sleep(0.5)
+            logger.info("[scheduler] 全市场信号扫描完成")
+        except Exception as e:
+            logger.warning(f"[scheduler] 全市场扫描失败: {e}")
+
+    # 启动后立即扫描一次自选股
+    try:
+        await _scan_watchlist()
+    except Exception as e:
+        logger.warning(f"[scheduler] 启动时扫描失败: {e}")
+
+    # 启动后 60 秒再执行一次全市场扫描，补齐非自选股最新信号
+    asyncio.create_task(_delayed_full_scan(_scan_all_stocks))
+
+    while True:
+        next_tick = _next_half_hour_tick()
+        sleep_seconds = (next_tick - datetime.now()).total_seconds()
+        await asyncio.sleep(max(sleep_seconds, 0))
+
+        now = datetime.now()
+        try:
+            # 每日 09:35 和 15:05 执行全市场扫描
+            if (now.hour == 9 and now.minute == 35) or (now.hour == 15 and now.minute == 5):
+                await _scan_all_stocks()
+            else:
+                await _scan_watchlist()
+        except Exception as e:
+            logger.warning(f"[scheduler] 定时信号扫描失败: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -94,8 +186,17 @@ async def lifespan(app: FastAPI):
             
     except Exception as e:
         logger.warning(f"启动引导检查失败: {e}")
-    
+
+    # 启动定时信号扫描任务
+    scheduler_task = asyncio.create_task(_scheduled_signal_scan_loop())
+
     yield
+
+    scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Quant Workbench Backend shutting down")
 
 
