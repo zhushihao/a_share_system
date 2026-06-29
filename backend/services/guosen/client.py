@@ -10,6 +10,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,17 @@ from typing import Any, Dict, List, Optional
 
 class GuosenSkillError(Exception):
     """国信 skill 调用异常"""
+
+
+def _sanitize_message(text: str) -> str:
+    """清除异常/日志中的 apiKey/token 等敏感信息"""
+    if not text:
+        return text
+    # 清除 URL 查询参数中的 apiKey
+    text = re.sub(r"apiKey=[^\s&\"']+", "apiKey=***", text, flags=re.IGNORECASE)
+    # 清除 V2V- 开头的 key
+    text = re.sub(r"V2V-[A-Za-z0-9_-]{50,}", "V2V-***", text)
+    return text
 
 
 class GuosenClient:
@@ -87,7 +99,7 @@ class GuosenClient:
 
         if result.returncode != 0:
             raise GuosenSkillError(
-                f"skill {skill_name} 返回非零退出码 {result.returncode}: {result.stderr[:500]}"
+                f"skill {skill_name} 返回非零退出码 {result.returncode}"
             )
 
         text = result.stdout.strip()
@@ -97,8 +109,9 @@ class GuosenClient:
         try:
             return json.loads(text)
         except json.JSONDecodeError as e:
+            safe_preview = _sanitize_message(text[:200])
             raise GuosenSkillError(
-                f"skill {skill_name} 返回非 JSON 输出: {text[:500]}"
+                f"skill {skill_name} 返回非 JSON 输出: {safe_preview}"
             ) from e
 
     # ───────────────────────────────────────────────
@@ -202,46 +215,7 @@ class GuosenClient:
         return self._run_script("gs-economy-query", "get_data.py", [query_text])
 
     # ───────────────────────────────────────────────
-    # 智能选股
+    # 智能选股 / 基金对比 / ETF 筛选
     # ───────────────────────────────────────────────
-
-    def query_stock_picking(self, *args: str) -> Dict[str, Any]:
-        """调用智能选股脚本，参数直接透传"""
-        return self._run_script("gs-smart-stock-picking", "gs_stock_picking.py", list(args))
-
-    # ───────────────────────────────────────────────
-    # 基金对比
-    # ───────────────────────────────────────────────
-
-    def query_fund_compare(self, *args: str) -> Dict[str, Any]:
-        """调用基金对比脚本，参数直接透传"""
-        return self._run_script("gs-fund-compare", "get_data.py", list(args))
-
-    # ───────────────────────────────────────────────
-    # ETF 筛选
-    # ───────────────────────────────────────────────
-
-    def query_etf_filter(self, *args: str) -> Dict[str, Any]:
-        """
-        ETF 筛选，结果默认落盘到脚本 output 目录。
-        本方法仅触发脚本执行，返回 stdout 文本；如需读取结果文件需额外处理。
-        """
-        script_path = self.skills_root / "gs-etf-filter" / "scripts" / "get_data.py"
-        env = self._env_for("gs-etf-filter")
-        cmd = [sys.executable, str(script_path), *args]
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=60,
-                encoding="utf-8",
-                errors="ignore",
-            )
-        except Exception as e:
-            raise GuosenSkillError(f"ETF 筛选调用失败: {e}") from e
-
-        if result.returncode != 0:
-            raise GuosenSkillError(f"ETF 筛选返回非零退出码: {result.stderr[:500]}")
-        return {"stdout": result.stdout, "stderr": result.stderr}
+    # TODO: 这三个 skill 的脚本支持参数较灵活，当前先不暴露开放 *args 透传接口，
+    # 后续按具体业务场景补充显式、带校验的 typed 方法，避免命令注入与路径遍历。
