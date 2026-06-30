@@ -10,9 +10,11 @@
 
 import json
 import os
+import random
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -75,6 +77,8 @@ class GuosenClient:
         script_name: str,
         args: List[str],
         timeout: int = 60,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
     ) -> Dict[str, Any]:
         script_path = self.skills_root / skill_name / "scripts" / script_name
         if not script_path.exists():
@@ -82,37 +86,46 @@ class GuosenClient:
 
         cmd = [sys.executable, str(script_path), *args]
         env = self._env_for(skill_name)
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=timeout,
-                encoding="utf-8",
-                errors="ignore",
-            )
-        except subprocess.TimeoutExpired as e:
-            raise GuosenSkillError(f"skill {skill_name} 调用超时") from e
-        except Exception as e:
-            raise GuosenSkillError(f"skill {skill_name} 调用失败: {e}") from e
+        last_error: Optional[Exception] = None
 
-        if result.returncode != 0:
-            raise GuosenSkillError(
-                f"skill {skill_name} 返回非零退出码 {result.returncode}"
-            )
+        for attempt in range(max_retries):
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=timeout,
+                    encoding="utf-8",
+                    errors="ignore",
+                )
+            except subprocess.TimeoutExpired as e:
+                last_error = GuosenSkillError(f"skill {skill_name} 调用超时")
+            except Exception as e:
+                last_error = GuosenSkillError(f"skill {skill_name} 调用失败: {e}")
+            else:
+                if result.returncode == 0:
+                    text = result.stdout.strip()
+                    if text:
+                        try:
+                            return json.loads(text)
+                        except json.JSONDecodeError as e:
+                            safe_preview = _sanitize_message(text[:200])
+                            raise GuosenSkillError(
+                                f"skill {skill_name} 返回非 JSON 输出: {safe_preview}"
+                            ) from e
+                    last_error = GuosenSkillError(f"skill {skill_name} 返回空输出")
+                else:
+                    last_error = GuosenSkillError(
+                        f"skill {skill_name} 返回非零退出码 {result.returncode}"
+                    )
 
-        text = result.stdout.strip()
-        if not text:
-            raise GuosenSkillError(f"skill {skill_name} 返回空输出")
+            # 非最后一次尝试则退避重试
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                time.sleep(delay)
 
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as e:
-            safe_preview = _sanitize_message(text[:200])
-            raise GuosenSkillError(
-                f"skill {skill_name} 返回非 JSON 输出: {safe_preview}"
-            ) from e
+        raise last_error or GuosenSkillError(f"skill {skill_name} 调用失败，已重试 {max_retries} 次")
 
     # ───────────────────────────────────────────────
     # 行情数据
