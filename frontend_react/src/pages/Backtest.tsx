@@ -69,7 +69,7 @@ interface BacktestResult {
   error?: string
 }
 
-export default function Backtest() {
+function Backtest() {
   const [searchParams] = useSearchParams()
   const defaultSymbol = searchParams.get('symbol') || '000001'
 
@@ -659,6 +659,8 @@ export default function Backtest() {
   )
 }
 
+export default React.memo(Backtest)
+
 function MetricCard({
   label,
   value,
@@ -674,8 +676,8 @@ function MetricCard({
     positive === undefined
       ? 'text-slate-700'
       : positive
-      ? 'text-emerald-600'
-      : 'text-red-500'
+      ? 'text-red-500'
+      : 'text-emerald-600'
 
   return (
     <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200">

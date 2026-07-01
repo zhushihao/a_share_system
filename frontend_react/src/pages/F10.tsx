@@ -104,7 +104,7 @@ function getValueColor(key: string, value: unknown): string {
   return 'text-slate-800'
 }
 
-export default function F10Page() {
+function F10Page() {
   const { symbol } = useParams<{ symbol: string }>()
   const [f10Data, setF10Data] = useState<Record<string, unknown> | null>(null)
   const [source, setSource] = useState<string>('')
@@ -276,3 +276,5 @@ export default function F10Page() {
     </div>
   )
 }
+
+export default React.memo(F10Page)

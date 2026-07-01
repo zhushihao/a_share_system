@@ -115,7 +115,7 @@ export interface SignalItem {
   symbol: string
   name: string
   timestamp: string
-  signal_type: 'BUY' | 'SELL' | 'WATCH' | 'ALERT'
+  signal_type: 'BUY' | 'SELL' | 'WATCH' | 'ALERT' | 'HOLD'
   signal_type_label?: string
   strategy: string
   strategy_label?: string

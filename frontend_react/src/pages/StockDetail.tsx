@@ -51,7 +51,7 @@ function formatVolume(value: number | undefined | null): string {
   return n.toLocaleString()
 }
 
-export default function StockDetail() {
+function StockDetail() {
   const { symbol } = useParams<{ symbol: string }>()
   const [quote, setQuote] = useState<StandardQuote | null>(null)
   const [ohlcv, setOhlcv] = useState<OHLCVRecord[]>([])
@@ -98,23 +98,14 @@ export default function StockDetail() {
       return () => clearTimeout(timer)
     }
   }, [searchParams])
+
+  // 加载用户默认复权设置
   useEffect(() => {
     fetchSettings()
       .then((settings) => {
         const adj = settings?.default_adjust
         if (adj && ['qfq', 'hfq', 'none'].includes(adj)) {
           setAdjustMode(adj)
-        }
-      })
-      .catch(() => {})
-  }, [])
-
-  // 加载用户默认复权设置
-  useEffect(() => {
-    fetchSettings()
-      .then((settings) => {
-        if (settings?.default_adjust) {
-          setAdjustMode(settings.default_adjust)
         }
       })
       .catch(() => {})
@@ -799,14 +790,14 @@ export default function StockDetail() {
                   <div className="text-right">
                     <div
                       className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                        p.confidence >= 80
+                        p.confidence >= 0.8
                           ? 'bg-red-100 text-red-600'
-                          : p.confidence >= 60
+                          : p.confidence >= 0.6
                           ? 'bg-amber-100 text-amber-600'
                           : 'bg-blue-100 text-blue-600'
                       }`}
                     >
-                      置信度 {p.confidence}%
+                      置信度 {Math.round((p.confidence || 0) * 100)}%
                     </div>
                   </div>
                 </div>
@@ -948,3 +939,5 @@ export default function StockDetail() {
     </div>
   )
 }
+
+export default React.memo(StockDetail)

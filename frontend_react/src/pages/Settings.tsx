@@ -16,6 +16,16 @@ export default function Settings() {
     loadSettings()
   }, [])
 
+  // 主题变更时立即应用到全局 html 元素
+  useEffect(() => {
+    const theme = settings.theme
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [settings.theme])
+
   const loadSettings = async () => {
     try {
       const data = await fetchSettings()

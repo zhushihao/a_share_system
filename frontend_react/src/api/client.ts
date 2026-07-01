@@ -11,7 +11,7 @@ export const apiClient = axios.create({
 })
 
 export async function fetchHealth() {
-  const { data } = await axios.get('/api/health')
+  const { data } = await apiClient.get('/health', { baseURL: '/api' })
   return data
 }
 
@@ -278,6 +278,7 @@ export async function sendAIChat(request: {
   symbol?: string
   history?: Array<{ role: string; content: string }>
   stream?: boolean
+  context_data?: Record<string, any> | null
 }) {
   const { data } = await apiClient.post('/ai/chat', request)
   return data
@@ -299,7 +300,7 @@ export async function fetchResonance(symbol: string) {
 }
 
 export async function trackSignalPerformance(signalId: string, currentPrice: number) {
-  const { data } = await apiClient.post(`/signals/${signalId}/track`, null, { params: { current_price: currentPrice } })
+  const { data } = await apiClient.post(`/signals/${signalId}/track`, { current_price: currentPrice })
   return data
 }
 
@@ -309,7 +310,7 @@ export async function fetchSignalPerformance(strategy?: string, days?: number) {
 }
 
 export async function closeSignal(signalId: string, status: string, exitPrice: number) {
-  const { data } = await apiClient.post(`/signals/${signalId}/close`, null, { params: { status, exit_price: exitPrice } })
+  const { data } = await apiClient.post(`/signals/${signalId}/close`, { status, exit_price: exitPrice })
   return data
 }
 
@@ -334,7 +335,7 @@ export async function fetchIndexKline(indexCode: string, params?: { period?: str
 }
 
 export async function fetchAIContext(symbol?: string, context_type?: string) {
-  const { data } = await apiClient.post('/ai/context', null, { params: { symbol, context_type } })
+  const { data } = await apiClient.post('/ai/context', { symbol, context_type })
   return data
 }
 

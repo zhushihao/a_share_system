@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   fetchAIStatus,
@@ -51,7 +51,7 @@ interface ChatMessage {
   latencyMs?: number
 }
 
-export default function AIResearch() {
+function AIResearch() {
   const [searchParams] = useSearchParams()
   const defaultSymbol = searchParams.get('symbol') || ''
 
@@ -158,6 +158,10 @@ export default function AIResearch() {
           message: prompt,
           symbol: selectedSymbol || undefined,
           context_type: contextType as any,
+          context_data: contextData,
+          history: messages
+            .filter((m) => m.role === 'user' || m.role === 'assistant')
+            .map((m) => ({ role: m.role, content: m.content })),
         })
 
         const assistantMsg: ChatMessage = {
@@ -452,3 +456,5 @@ export default function AIResearch() {
     </div>
   )
 }
+
+export default React.memo(AIResearch)

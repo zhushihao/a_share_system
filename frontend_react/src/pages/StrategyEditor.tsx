@@ -113,7 +113,7 @@ const STRATEGY_EXAMPLES: StrategyExample[] = [
   },
 ]
 
-export default function StrategyEditor() {
+function StrategyEditor() {
   const [searchParams] = useSearchParams()
   const defaultSymbol = searchParams.get('symbol') || '000001'
 
@@ -429,7 +429,7 @@ export default function StrategyEditor() {
 }
 
 function ResultCard({ label, value, positive }: { label: string; value: string; positive?: boolean }) {
-  const colorClass = positive === undefined ? 'text-slate-700' : positive ? 'text-emerald-600' : 'text-red-500'
+  const colorClass = positive === undefined ? 'text-slate-700' : positive ? 'text-red-500' : 'text-emerald-600'
   return (
     <div className="p-3 bg-slate-50 rounded-lg">
       <p className="text-xs text-slate-500">{label}</p>
@@ -437,3 +437,5 @@ function ResultCard({ label, value, positive }: { label: string; value: string; 
     </div>
   )
 }
+
+export default React.memo(StrategyEditor)

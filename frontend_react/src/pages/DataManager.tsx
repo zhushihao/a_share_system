@@ -29,7 +29,7 @@ interface StockItem {
   market: string
 }
 
-export default function DataManager() {
+function DataManager() {
   const [overview, setOverview] = useState<any>(null)
   const [stockList, setStockList] = useState<StockItem[]>([])
   const [diagnosis, setDiagnosis] = useState<any>(null)
@@ -449,6 +449,8 @@ export default function DataManager() {
     </div>
   )
 }
+
+export default React.memo(DataManager)
 
 function HealthItem({ label, available }: { label: string; available?: boolean }) {
   return (

@@ -80,7 +80,7 @@ function ConfidenceBar({ value }: { value: number }) {
   )
 }
 
-export default function Signals() {
+function Signals() {
   const [signals, setSignals] = useState<SignalItem[]>([])
   const [strategies, setStrategies] = useState<SignalStrategy[]>([])
   const [stats, setStats] = useState<any>(null)
@@ -198,13 +198,21 @@ export default function Signals() {
   }
 
   async function handleCloseSignal(signalId: string, status: string) {
+    const signal = signals.find((s) => s.id === signalId)
+    const defaultPrice = signal?.price?.toFixed(2) || ''
+    const input = window.prompt(`请输入平仓价格（默认：${defaultPrice || '最新价'}）`, defaultPrice)
+    if (input === null) return
+    const exitPrice = parseFloat(input)
+    if (Number.isNaN(exitPrice) || exitPrice <= 0) {
+      alert('请输入有效的平仓价格')
+      return
+    }
     try {
-      const signal = signals.find((s) => s.id === signalId)
-      const exitPrice = signal?.price || 0
       await closeSignal(signalId, status, exitPrice)
       loadSignals()
     } catch (e) {
       console.error('Close failed', e)
+      alert('平仓失败，请稍后重试')
     }
   }
 
@@ -718,3 +726,5 @@ const SignalRow = React.memo(function SignalRow({
     </div>
   )
 })
+
+export default React.memo(Signals)
