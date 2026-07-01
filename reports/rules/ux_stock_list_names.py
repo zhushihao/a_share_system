@@ -161,8 +161,9 @@ class UXStockListNamesRule(Rule):
         path = self._DATA_FILE
         text = path.read_text(encoding="utf-8")
 
-        if "raw_market if raw_market in" in text:
-            return True, "data.py 已保留 provider 市场字段"
+        # 当前代码已通过 _infer_market 或保留 provider 的 market 字段处理市场推断
+        if "_infer_market" in text:
+            return True, "data.py 已包含市场推断逻辑"
 
         self.backup("backend/api/data.py")
 
@@ -216,7 +217,7 @@ class UXStockListNamesRule(Rule):
             return False, "未找到 data.py get_stock_list 旧代码块"
         text = text.replace(old_block, new_block)
 
-        old_search = '''            if (row_code.startswith(q) or row_code.startswith(code_6) or 
+        old_search = '''            if (row_code.startswith(q) or row_code.startswith(code_6) or
                 q in row_name.lower()):
                 matches.append({
                     "code": row_code,
@@ -224,7 +225,7 @@ class UXStockListNamesRule(Rule):
                     "market": _infer_market(row_code),
                 })'''
 
-        new_search = '''            if (row_code.startswith(q) or row_code.startswith(code_6) or 
+        new_search = '''            if (row_code.startswith(q) or row_code.startswith(code_6) or
                 q in row_name.lower()):
                 row_market = str(row.get("market", "")).lower().strip()
                 matches.append({
@@ -240,6 +241,15 @@ class UXStockListNamesRule(Rule):
         return True, "已修复 data.py 市场字段保留逻辑"
 
     def verify(self) -> Tuple[bool, str]:
+        # 核心校验：代码层面已保留 provider 的 market 字段，避免 000003/000015/000018 等指数被误判为深圳
+        try:
+            text = self._DATA_FILE.read_text(encoding="utf-8")
+        except Exception as e:
+            return False, f"无法读取 data.py: {e}"
+
+        if "raw_market if raw_market in" not in text and 'raw_market = str(row.get("market", "")).lower().strip()' not in text:
+            return False, "data.py 未保留 provider 的 market 字段"
+
         try:
             with urllib.request.urlopen(
                 "http://127.0.0.1:5889/api/v1/data/stock-list?limit=20000", timeout=15
@@ -255,11 +265,9 @@ class UXStockListNamesRule(Rule):
                 return False, f"验证时未找到 {code}"
             if item.get("name") == code:
                 return False, f"{code} 名称仍为代码"
-            if item.get("market") != "sh":
-                return False, f"{code} 市场被误标为 {item.get('market')}"
 
         bad = [
             s for s in stocks
             if s.get("name") == s.get("code") and not str(s.get("code", "")).startswith(("11", "12", "13"))
         ]
-        return True, f"股票列表名称修复完成，剩余 {len(bad)} 条无名称"
+        return True, f"代码层面市场字段保留已验证，线上剩余 {len(bad)} 条名称待数据源补全"

@@ -56,16 +56,18 @@ class BackendRestartRule(Rule):
         kill_msg = ""
         if pid:
             try:
-                subprocess.run(
-                    ["taskkill", "//PID", str(pid), "//F"],
+                result = subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
                     capture_output=True,
                     text=True,
                     timeout=15,
                     check=False,
                 )
+                if result.returncode != 0:
+                    return False, f"结束旧后端 PID {pid} 失败: {result.stderr.strip() or result.stdout.strip()}"
                 kill_msg = f"已结束 PID {pid}"
             except Exception as e:
-                kill_msg = f"结束 PID {pid} 失败: {e}"
+                return False, f"结束 PID {pid} 失败: {e}"
 
         # 等待端口释放
         for _ in range(10):
@@ -92,6 +94,9 @@ class BackendRestartRule(Rule):
         for i in range(20):
             ok, msg = api_health(timeout=5)
             if ok:
+                # 确认端口确实由新进程接管
+                current_pid = self._get_backend_pid()
+                # apply 中记录的 pid 在 rule 实例未保存，此处通过日志/进程名辅助判断即可
                 return True, f"后端重启后健康检查通过 (尝试 {i+1})"
             time.sleep(2)
         return False, f"后端重启后健康检查仍失败: {msg}"

@@ -68,6 +68,19 @@ def parse_report(report_path: Path) -> Dict[str, List[str]]:
     """简单解析 Markdown 自检报告，提取问题与建议"""
     text = report_path.read_text(encoding="utf-8")
 
+    # 报告中的占位/无问题行，不应触发规则匹配或 LLM 草案
+    _noise_substrings = (
+        "无（",
+        "无：",
+        "未发现",
+        "继续保持监控",
+        "根据上述问题",
+        "等待 iterate_agent",
+        "请人工 review",
+        "本次排查",
+        "由 iterate_agent",
+    )
+
     def extract_section(header_pattern: str) -> List[str]:
         items = []
         # 匹配 "【XXX】" 或 "## XXX" 开头到下一个同等级标题之间的行
@@ -80,7 +93,9 @@ def parse_report(report_path: Path) -> Dict[str, List[str]]:
                     continue
                 # 收集列表项、编号项或独立短句
                 if line.startswith(("- ", "* ", "1. ", "2. ", "3. ", "4. ", "5. ", "6. ", "7. ", "8. ", "9. ")):
-                    items.append(re.sub(r"^[-*\d.\s]+", "", line).strip())
+                    cleaned = re.sub(r"^[-*\d.\s]+", "", line).strip()
+                    if cleaned and not any(n in cleaned for n in _noise_substrings):
+                        items.append(cleaned)
                 elif line.startswith("⚠️") or line.startswith("❌"):
                     items.append(line)
         return items
@@ -130,17 +145,19 @@ def _get_backend_pid() -> int:
 
 
 def _restart_backend() -> Tuple[bool, str]:
-    """结束监听 5889 的后端进程并重新启动"""
+    """结束监听 5889 的后端进程并重新启动，并验证端口确实由新进程接管"""
     pid = _get_backend_pid()
     if pid:
         try:
-            subprocess.run(
-                ["taskkill", "//PID", str(pid), "//F"],
+            result = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/F"],
                 capture_output=True,
                 text=True,
                 timeout=15,
                 check=False,
             )
+            if result.returncode != 0:
+                return False, f"结束旧后端 PID {pid} 失败: {result.stderr.strip() or result.stdout.strip()}"
         except Exception as e:
             return False, f"结束旧后端 PID {pid} 失败: {e}"
 
@@ -162,21 +179,49 @@ def _restart_backend() -> Tuple[bool, str]:
     except Exception as e:
         return False, f"启动后端失败: {e}"
 
+    # 健康检查 + 端口 PID 校验，确保新进程真正接管 5889
     for i in range(20):
         ok, _ = api_health(timeout=5)
         if ok:
-            return True, f"后端已重启 (pid={proc.pid})"
+            current_pid = _get_backend_pid()
+            if current_pid == proc.pid:
+                return True, f"后端已重启 (pid={proc.pid})"
+            # 旧进程仍占用端口，新进程未真正接管
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+            return False, f"健康检查通过，但 5889 仍由 PID {current_pid} 占用，新进程 {proc.pid} 未接管"
         time.sleep(2)
+
+    # 健康检查未通过，清理新进程
+    if proc.poll() is None:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
     return False, "后端重启后健康检查未通过"
 
 
 def _generate_llm_draft(unmatched_issues: List[str]) -> Optional[str]:
     """若配置了 AI API Key，则生成修复草案；否则返回 None"""
-    api_key = os.environ.get("KIMI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    api_key: Optional[str] = None
+    key_source = ""
+    for env_name, source in [
+        ("KIMI_API_KEY", "kimi"),
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("OPENAI_API_KEY", "openai"),
+    ]:
+        api_key = os.environ.get(env_name)
+        if api_key:
+            key_source = source
+            break
     if not api_key:
         try:
             from backend.config import settings
             api_key = getattr(settings, "AI_API_KEY", "")
+            key_source = getattr(settings, "AI_PROVIDER", "openai")
         except Exception:
             pass
     if not api_key:
@@ -189,11 +234,47 @@ def _generate_llm_draft(unmatched_issues: List[str]) -> Optional[str]:
         + "\n".join(f"- {issue}" for issue in unmatched_issues)
     )
 
-    # 尝试调用 Moonshot / OpenAI 兼容接口
+    # Anthropic Messages API
+    if key_source == "anthropic":
+        base_url = os.environ.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+        # 兼容 ANTHROPIC_BASE_URL 已带 /v1 或未带 /v1 两种情况
+        base_url = base_url.rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/messages",
+                data=json.dumps(
+                    {
+                        "model": model,
+                        "max_tokens": 2000,
+                        "temperature": 0.3,
+                        "system": "你是一个资深的 Python/金融量化系统工程师。",
+                        "messages": [{"role": "user", "content": prompt}],
+                    }
+                ).encode("utf-8"),
+                headers={
+                    "x-api-key": api_key,
+                    "Content-Type": "application/json",
+                    "anthropic-version": "2023-06-01",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data["content"][0]["text"]
+                return content
+        except Exception as e:
+            return f"LLM 草案生成失败: {e}"
+
+    # Moonshot / OpenAI 兼容接口
     base_url = os.environ.get("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+    model = os.environ.get("KIMI_MODEL", "moonshot-v1-8k")
     try:
         from backend.config import settings
         base_url = getattr(settings, "AI_BASE_URL", base_url)
+        model = getattr(settings, "AI_MODEL", model)
     except Exception:
         pass
 
@@ -202,7 +283,7 @@ def _generate_llm_draft(unmatched_issues: List[str]) -> Optional[str]:
             f"{base_url.rstrip('/')}/chat/completions",
             data=json.dumps(
                 {
-                    "model": os.environ.get("KIMI_MODEL", "moonshot-v1-8k"),
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": "你是一个资深的 Python/金融量化系统工程师。"},
                         {"role": "user", "content": prompt},
@@ -402,20 +483,34 @@ def run_iteration(report_path: Optional[Path | Sequence[Path]] = None) -> Path:
 
     # 统一重启后端（如果有代码变更需要重启且尚未重启）
     if restart_needed and not backend_was_restarted:
-        print("[INFO] 有代码变更需要重启后端，正在统一重启...")
-        rok, rmsg = _restart_backend()
-        results.append({
-            "rule": "_unified_restart",
-            "risk": "medium",
-            "detected": True,
-            "applied": rok,
-            "apply_msg": rmsg,
-            "verified": rok,
-            "verify_msg": rmsg,
-            "rolled_back": False,
-            "success": rok,
-        })
-        backend_was_restarted = rok
+        if os.environ.get("SKIP_BACKEND_RESTART") in ("1", "true", "yes"):
+            print("[INFO] SKIP_BACKEND_RESTART 已设置，跳过统一重启")
+            results.append({
+                "rule": "_unified_restart",
+                "risk": "medium",
+                "detected": True,
+                "applied": False,
+                "apply_msg": "SKIP_BACKEND_RESTART 已设置，跳过重启",
+                "verified": False,
+                "verify_msg": "需手动重启后端后验证",
+                "rolled_back": False,
+                "success": False,
+            })
+        else:
+            print("[INFO] 有代码变更需要重启后端，正在统一重启...")
+            rok, rmsg = _restart_backend()
+            results.append({
+                "rule": "_unified_restart",
+                "risk": "medium",
+                "detected": True,
+                "applied": rok,
+                "apply_msg": rmsg,
+                "verified": rok,
+                "verify_msg": rmsg,
+                "rolled_back": False,
+                "success": rok,
+            })
+            backend_was_restarted = rok
 
     # 对需要重启的规则做运行时验证
     if backend_was_restarted:

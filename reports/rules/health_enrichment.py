@@ -6,6 +6,7 @@
 """
 
 import json
+import re
 import urllib.request
 from typing import Tuple
 
@@ -19,18 +20,29 @@ class HealthEnrichmentRule(Rule):
     risk = "low"
     requires_restart = True
 
+    @staticmethod
+    def _health_function_text(text: str) -> str:
+        """提取 /api/health 端点对应的函数体（兼容多个装饰器堆叠）"""
+        start = text.find('@app.get("/api/health")')
+        if start == -1:
+            return ""
+        # 跳过连续装饰器行
+        pos = text.find("\n", start) + 1
+        while pos > 0 and text[pos:].strip().startswith("@"):
+            pos = text.find("\n", pos) + 1
+        # 从 async def / def 开始到下一个顶层装饰器/函数
+        fn_start = pos
+        nxt = re.search(r"\n(?=@app\.get\(|@app\.post\(|async def |def )", text[fn_start:])
+        fn_end = fn_start + nxt.start() if nxt else len(text)
+        return text[fn_start:fn_end]
+
     def detect(self) -> Tuple[bool, str]:
         main_file = PROJECT_ROOT / "backend" / "main.py"
         text = main_file.read_text(encoding="utf-8")
 
-        fn_start = text.find('@app.get("/api/health")')
-        if fn_start == -1:
+        fn_text = self._health_function_text(text)
+        if not fn_text:
             return False, "未找到 /api/health 端点"
-        # 截取到下一个 @app 装饰器或函数定义之前
-        fn_end = text.find("\n@app", fn_start + 1)
-        if fn_end == -1:
-            fn_end = len(text)
-        fn_text = text[fn_start:fn_end]
 
         if "checks" in fn_text or "tdx_dir" in fn_text or "database" in fn_text.lower():
             return False, "健康检查已包含 DB/TDX 探测"
@@ -41,7 +53,9 @@ class HealthEnrichmentRule(Rule):
         self.backup("backend/main.py")
         text = main_file.read_text(encoding="utf-8")
 
+        # 支持旧的单装饰器写法，也兼容当前双装饰器写法
         old_fn = '''@app.get("/api/health")
+@app.get("/health")
 async def health_check():
     return {
         "status": "ok",
@@ -50,6 +64,7 @@ async def health_check():
     }'''
 
         new_fn = '''@app.get("/api/health")
+@app.get("/health")
 async def health_check():
     import os
     from backend.config import settings
@@ -62,8 +77,8 @@ async def health_check():
 
     # 数据源健康
     try:
-        from backend.services.data_provider import DataProviderService
-        provider = DataProviderService(tdxdir=settings.TDX_DIR)
+        from backend.services.data_provider import get_data_provider_service
+        provider = get_data_provider_service()
         checks["data_sources"] = provider.health_check()
     except Exception as e:
         checks["data_sources"] = {"error": str(e)}
@@ -83,7 +98,18 @@ async def health_check():
     }'''
 
         if old_fn not in text:
-            return False, "未找到旧的 /api/health 实现，可能源码已变化"
+            # 再尝试只有单个装饰器的旧版本
+            old_fn_single = '''@app.get("/api/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "version": "1.0.0",
+        "timestamp": datetime.now().isoformat(),
+    }'''
+            if old_fn_single in text:
+                old_fn = old_fn_single
+            else:
+                return False, "未找到旧的 /api/health 实现，可能源码已变化"
 
         text = text.replace(old_fn, new_fn)
         main_file.write_text(text, encoding="utf-8")
@@ -92,11 +118,7 @@ async def health_check():
     def verify(self) -> Tuple[bool, str]:
         main_file = PROJECT_ROOT / "backend" / "main.py"
         text = main_file.read_text(encoding="utf-8")
-        fn_start = text.find('@app.get("/api/health")')
-        fn_end = text.find("\n@app", fn_start + 1)
-        if fn_end == -1:
-            fn_end = len(text)
-        fn_text = text[fn_start:fn_end]
+        fn_text = self._health_function_text(text)
         if "checks" not in fn_text:
             return False, "main.py 中 /api/health 未包含 checks"
         try:
