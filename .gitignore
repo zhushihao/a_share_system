@@ -39,7 +39,7 @@ data/system.db
 backend/data/cache/
 backend/data/system.db
 backend/data/test_*.db
-data/backend/*.db
+data/backend/
 data/test_*.db
 reports/.backups/
 *.tsbuildinfo
@@ -53,6 +53,11 @@ frontend_react/vite.config.js
 config/user.yaml
 *.env
 .env.local
+
+# AI/personal session files (not part of the project)
+PROMPT_FOR_CLAUDE_CODE.md
+WORK_SESSION_STATE.json
+prompts/
 
 # Additional generated/output directories from local runs
 backend/quant_workbench.db
