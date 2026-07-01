@@ -136,6 +136,14 @@ async def _scheduled_signal_scan_loop():
     except Exception as e:
         logger.warning(f"[scheduler] 启动时扫描失败: {e}")
 
+    # 启动时扫描核心指数，确保信号列表不为空
+    try:
+        logger.info("[scheduler] 启动时扫描核心指数信号")
+        await scan_signals(SignalScanRequest(symbols=["000001", "399001", "399006", "000300"]))
+        logger.info("[scheduler] 核心指数信号扫描完成")
+    except Exception as e:
+        logger.warning(f"[scheduler] 核心指数信号扫描失败: {e}")
+
     # 启动后 60 秒再执行一次全市场扫描，补齐非自选股最新信号
     asyncio.create_task(_delayed_full_scan(_scan_all_stocks))
 
@@ -262,6 +270,28 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "checks": checks,
     }
+
+
+@app.post("/api/health/reset")
+@app.post("/health/reset")
+async def reset_health_stats():
+    """手动重置数据源统计计数器（failures 等）"""
+    try:
+        from backend.services.data_provider import get_data_provider_service
+        provider = get_data_provider_service()
+        stats = provider.provider.reset_stats()
+        return {
+            "status": "ok",
+            "message": "数据源统计计数器已重置",
+            "stats": stats,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"重置失败: {e}",
+            "timestamp": datetime.now().isoformat(),
+        }
 
 
 @app.get("/")

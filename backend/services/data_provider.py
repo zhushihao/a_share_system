@@ -29,6 +29,11 @@ from backend.core.observability import get_obs
 from backend.core.cache import MultiLevelCache, TTL_PRESETS
 from backend.core.resilience import get_resilience, FallbackResult
 
+try:
+    from backend.services.guosen.client import GuosenClient, GuosenSkillError
+except ImportError:
+    from services.guosen.client import GuosenClient, GuosenSkillError
+
 # 新系统 Schema（使用 backend 前缀兼容独立运行）
 try:
     from models.schemas import StandardQuote
@@ -67,6 +72,35 @@ def _is_placeholder_name(name: str, code: str) -> bool:
     if re.match(r"^[一-龥]{2,4}\d{4,6}$", name):
         return True
     return False
+
+
+def _to_float(value: Any) -> Optional[float]:
+    """安全将字符串/数字转为 float，空值返回 None。"""
+    if value is None or value == "" or value == "-":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_chinese_amount(text: Any) -> Optional[float]:
+    """解析带中文单位的金额/成交量字符串（万/亿/万亿）为数值。"""
+    if not text:
+        return None
+    text = str(text).strip().replace(",", "")
+    m = re.match(r"^([+-]?\d+(\.\d+)?)\s*(万|亿|万亿)?$", text)
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = m.group(3)
+    if unit == "万":
+        val *= 1e4
+    elif unit == "亿":
+        val *= 1e8
+    elif unit == "万亿":
+        val *= 1e12
+    return val
 
 # 缓存 key 版本：当复权等核心计算逻辑变更时，通过升级版本号让旧缓存失效
 CACHE_KEY_VERSION = "v3"
@@ -386,7 +420,21 @@ class DataProviderService:
             if df is not None and len(df) > 0:
                 source_name = "persisted"
                 self._obs.log("INFO", f"OHLCV fetched (persisted): {code} ({len(df)} rows)", "DataProviderService")
-        
+
+        # 2.4 离线/SQLite 数据滞后或完全缺失时，用国信 past_hq 补充/兜底
+        if period == "daily" and (df is None or len(df) == 0 or source_name in ("offline", "persisted")):
+            try:
+                guosen_df = self._fetch_guosen_kline(code, period, want_nums=120)
+                if guosen_df is not None and len(guosen_df) > 0:
+                    if df is not None and len(df) > 0:
+                        df = self._merge_extend_offline_with_guosen(df, guosen_df)
+                    else:
+                        df = guosen_df
+                    source_name = "guosen"
+                    self._obs.log("INFO", f"OHLCV fetched (guosen): {code} ({len(df)} rows)", "DataProviderService")
+            except Exception as e:
+                self._obs.log("DEBUG", f"Guosen fallback failed for {code}: {e}", "DataProviderService")
+
         if df is not None and len(df) > 0:
             # 分钟级聚合（5m/15m/30m/60m）
             if interval > 1 and fetch_period == "minute":
@@ -961,7 +1009,7 @@ class DataProviderService:
             db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "backend", "quant_workbench.db")
             if not os.path.exists(db_path):
                 return None
-            
+
             conn = sqlite3.connect(db_path)
             cursor = conn.execute(
                 "SELECT date, open, high, low, close, volume, amount FROM realtime_kline_cache_v2 WHERE symbol = ? AND period = ? AND adjust = ? ORDER BY date",
@@ -969,10 +1017,10 @@ class DataProviderService:
             )
             rows = cursor.fetchall()
             conn.close()
-            
+
             if not rows:
                 return None
-            
+
             df = pd.DataFrame(rows, columns=["date", "open", "high", "low", "close", "volume", "amount"])
             df["code"] = code
             df["open"] = pd.to_numeric(df["open"], errors="coerce")
@@ -985,6 +1033,76 @@ class DataProviderService:
         except Exception as e:
             self._obs.log("DEBUG", f"Failed to read persisted data for {code}: {e}", "DataProviderService")
             return None
+
+    def _fetch_guosen_kline(
+        self,
+        code: str,
+        period: str = "daily",
+        want_nums: int = 120,
+    ) -> Optional[pd.DataFrame]:
+        """
+        通过国信 past_hq 获取历史日 K 线，用于补充本地 TDX 数据滞后的问题。
+        目前仅支持日线；返回 DataFrame[date, code, open, high, low, close, volume, amount]。
+        """
+        if period != "daily":
+            return None
+        if not os.environ.get("GS_API_KEY"):
+            return None
+        try:
+            client = GuosenClient()
+            set_code = 1 if code.startswith("6") else 0 if code.startswith(("0", "3")) else 2
+            resp = client.query_past_hq(code, set_code, want_nums=want_nums, timeout=45, max_retries=2)
+        except Exception as e:
+            self._obs.log("DEBUG", f"Guosen past_hq failed for {code}: {e}", "DataProviderService")
+            return None
+
+        obj = resp.get("object") if isinstance(resp, dict) else None
+        if not isinstance(obj, dict):
+            return None
+        rows = obj.get("dailyHQList")
+        if not isinstance(rows, list) or not rows:
+            return None
+
+        records = []
+        for r in rows:
+            records.append({
+                "date": str(r.get("date", "")),
+                "code": code,
+                "open": _to_float(r.get("open")),
+                "high": _to_float(r.get("max")),
+                "low": _to_float(r.get("min")),
+                "close": _to_float(r.get("close")),
+                "volume": _parse_chinese_amount(r.get("vol")),
+                "amount": _parse_chinese_amount(r.get("amount")),
+            })
+        df = pd.DataFrame(records)
+        if df.empty:
+            return None
+        df = df.dropna(subset=["open", "high", "low", "close"], how="all")
+        if df.empty:
+            return None
+        df = df.sort_values("date").reset_index(drop=True)
+        return df
+
+    def _merge_extend_offline_with_guosen(
+        self,
+        offline_df: Optional[pd.DataFrame],
+        guosen_df: pd.DataFrame,
+    ) -> pd.DataFrame:
+        """将国信日 K 数据合并/追加到离线 DataFrame 后，扩展最新日期。"""
+        if offline_df is None or offline_df.empty:
+            return guosen_df.copy()
+        offline_df = offline_df.copy()
+        offline_df["date"] = offline_df["date"].astype(str).str.replace("-", "")
+        guosen_df = guosen_df.copy()
+        guosen_df["date"] = guosen_df["date"].astype(str).str.replace("-", "")
+        max_offline = offline_df["date"].max()
+        extra = guosen_df[guosen_df["date"] > max_offline].copy()
+        if extra.empty:
+            return offline_df.copy()
+        combined = pd.concat([offline_df, extra], ignore_index=True)
+        combined = combined.sort_values("date").reset_index(drop=True)
+        return combined
     
     def compare_realtime_vs_offline(self, code: str, period: str = "daily", adjust: str = "qfq") -> Dict[str, Any]:
         """
@@ -1049,8 +1167,38 @@ class DataProviderService:
     # ─────────────────────────────────────────
     
     def fetch_stock_list(self, source: str = "auto") -> Optional[pd.DataFrame]:
-        """获取全市场股票列表"""
-        return self.provider.fetch_stock_list(source=source)
+        """获取全市场股票列表，并对占位符名称用实时行情补全"""
+        df = self.provider.fetch_stock_list(source=source)
+        if df is None or df.empty or "code" not in df.columns or "name" not in df.columns:
+            return df
+
+        # 对名称仍为代码的股票，尝试用实时行情补全名称
+        try:
+            df = df.copy()
+            codes = df["code"].astype(str).str.strip().str.zfill(6)
+            names = df["name"].astype(str).str.strip()
+            placeholder_mask = (codes == names) & (~codes.str.startswith(("11", "12", "13")))
+            placeholder_codes = codes[placeholder_mask].tolist()
+            if placeholder_codes:
+                rt_df = self.provider.fetch_realtime_quote(placeholder_codes)
+                if rt_df is not None and not rt_df.empty and "name" in rt_df.columns:
+                    name_map = {}
+                    for _, row in rt_df.iterrows():
+                        c = str(row.get("code", "")).strip().zfill(6)
+                        n = _normalize_stock_name(str(row.get("name", "")))
+                        if c and n and not _is_placeholder_name(n, c):
+                            name_map[c] = n
+                    if name_map:
+                        def _fill_name(row):
+                            c = str(row.get("code", "")).strip().zfill(6)
+                            n = str(row.get("name", "")).strip()
+                            if c == n and c in name_map:
+                                return name_map[c]
+                            return row["name"]
+                        df["name"] = df.apply(_fill_name, axis=1)
+        except Exception as e:
+            self._obs.log("DEBUG", f"Supplement stock list names failed: {e}", "DataProviderService")
+        return df
     
     def get_stock_quote(self, symbol: str, adjust: str = "qfq") -> Optional[StandardQuote]:
         """

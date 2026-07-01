@@ -143,14 +143,15 @@ async def get_stock_list(
         # 按代码排序，避免截断时丢失特定股票（如 300308 中际旭创）
         df = df.sort_values(by="code").reset_index(drop=True).head(limit)
 
-        # 转换为标准格式，按代码前缀强制推断市场（避免 provider 返回错误 market）
+        # 转换为标准格式，优先使用 provider 返回的市场字段，缺失时按代码前缀推断
         records = []
         for _, row in df.iterrows():
             code = str(row.get("code", ""))
+            raw_market = str(row.get("market", "")).lower().strip()
             records.append({
                 "code": code,
                 "name": _normalize_stock_name(str(row.get("name", ""))),
-                "market": _infer_market(code),
+                "market": raw_market if raw_market in ("sh", "sz", "bj") else _infer_market(code),
             })
 
         return {
@@ -204,10 +205,11 @@ async def search_stocks(
                 if row_code in seen_codes:
                     continue
                 seen_codes.add(row_code)
+                row_market = str(row.get("market", "")).lower().strip()
                 matches.append({
                     "code": row_code,
                     "name": row_name,
-                    "market": _infer_market(row_code),
+                    "market": row_market if row_market in ("sh", "sz", "bj") else _infer_market(row_code),
                 })
 
             if len(matches) >= limit:

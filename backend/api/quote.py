@@ -1,10 +1,17 @@
 from fastapi import APIRouter, HTTPException, Query, Body
 from typing import List, Optional
 from datetime import datetime
+import os
+import re
 import pandas as pd
 
 from backend.services.data_platform import get_data_platform_service
 from backend.services.data_provider import DataProviderService, get_data_provider_service
+
+try:
+    from backend.services.guosen.client import GuosenClient, GuosenSkillError
+except ImportError:
+    from services.guosen.client import GuosenClient, GuosenSkillError
 
 # 新分析模块导入
 from backend.services.patterns import detect_all_patterns
@@ -23,7 +30,7 @@ router = APIRouter()
 # 大盘概览响应缓存（60秒）
 _market_overview_cache: Optional[dict] = None
 _market_overview_cache_time: Optional[datetime] = None
-_MARKET_OVERVIEW_CACHE_TTL = 60
+_MARKET_OVERVIEW_CACHE_TTL = 300
 
 
 # 技术指标中文标签
@@ -953,12 +960,165 @@ def _to_python(value):
     """将 pandas/numpy 标量转换为原生 Python 类型，便于 JSON 序列化。"""
     if value is None:
         return None
+    if value == "" or value == "-":
+        return None
     if isinstance(value, (int, float, str, bool)):
         return value
     # 处理 numpy/pandas 标量
     if hasattr(value, "item"):
         return value.item()
     return value
+
+
+def _to_float(value) -> Optional[float]:
+    """安全将字符串/数字转为 float，空值返回 None。"""
+    if value is None or value == "" or value == "-":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_chinese_amount(text) -> Optional[float]:
+    """解析带中文单位的金额字符串（万/亿/万亿）为数值（元）。"""
+    if not text:
+        return None
+    text = str(text).strip().replace(",", "")
+    m = re.match(r"^([+-]?\d+(\.\d+)?)\s*(万|亿|万亿)?$", text)
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = m.group(3)
+    if unit == "万":
+        val *= 1e4
+    elif unit == "亿":
+        val *= 1e8
+    elif unit == "万亿":
+        val *= 1e12
+    return val
+
+
+def _infer_guosen_market(symbol: str) -> str:
+    """根据 A 股代码推断市场代码（SH/SZ/BJ）。"""
+    if symbol.startswith("6"):
+        return "SH"
+    if symbol.startswith(("0", "3")):
+        return "SZ"
+    return "BJ"
+
+
+def _infer_guosen_set_code(symbol: str) -> int:
+    """根据 A 股代码推断国信证券市场代码（0深圳，1上海，2北交所）。"""
+    if symbol.startswith("6"):
+        return 1
+    if symbol.startswith(("0", "3")):
+        return 0
+    return 2
+
+
+def _sanitize_guosen_msg(text: str) -> str:
+    """清除日志/异常中的 API Key 等敏感信息。"""
+    if not text:
+        return text
+    text = re.sub(r"apiKey=[^\s&\"']+", "apiKey=***", text, flags=re.IGNORECASE)
+    text = re.sub(r"V2V-[A-Za-z0-9_-]{50,}", "V2V-***", text)
+    return text
+
+
+def _fetch_f10_from_guosen(symbol: str) -> Optional[dict]:
+    """通过国信财务 skill 获取 F10 核心字段（EPS/BVPS/ROE/营收/净利润等）。"""
+    if not os.environ.get("GS_API_KEY"):
+        return None
+    try:
+        client = GuosenClient()
+        market = _infer_guosen_market(symbol)
+        set_code = _infer_guosen_set_code(symbol)
+
+        # 最新 4 期利润表（用于 TTM 净利润）+ 最新资产负债表
+        income_resp = client.query_financial(
+            "a_income", symbol, market, "Q0", count=4, timeout=45, max_retries=2
+        )
+        balance_resp = client.query_financial(
+            "a_balance", symbol, market, "Q0", count=1, timeout=45, max_retries=2
+        )
+        # 行情用于总市值/当前价格，进而推算总股本
+        hq_resp = client.query_single_hq(symbol, set_code=set_code, timeout=30, max_retries=2)
+    except Exception as e:
+        return None
+
+    incomes = income_resp.get("income") if isinstance(income_resp, dict) else None
+    balances = balance_resp.get("balance") if isinstance(balance_resp, dict) else None
+    if not isinstance(incomes, list) or not incomes:
+        return None
+    if not isinstance(balances, list) or not balances:
+        return None
+
+    latest_income = incomes[0]
+    latest_balance = balances[0]
+
+    # TTM 净利润：最近 4 个季度净利润之和
+    ttm_profit = 0.0
+    ttm_count = 0
+    for r in incomes[:4]:
+        npv = _to_float(r.get("netProfit"))
+        if npv:
+            ttm_profit += npv
+            ttm_count += 1
+
+    total_equity = _to_float(latest_balance.get("totalShareholderEquity"))
+    eps = _to_float(latest_income.get("basicEPS"))
+    revenue = _to_float(latest_income.get("operatingRevenue")) or _to_float(
+        latest_income.get("totalOperatingRevenue")
+    )
+    profit = _to_float(latest_income.get("netProfit"))
+
+    # 从行情解析总市值与现价，估算总股本
+    hq_obj = hq_resp.get("object") if isinstance(hq_resp, dict) else {}
+    if not isinstance(hq_obj, dict):
+        hq_obj = {}
+    price = _to_float(hq_obj.get("now"))
+    market_cap = _parse_chinese_amount(hq_obj.get("zsz"))
+    total_shares = None
+    if market_cap and price and price > 0:
+        total_shares = market_cap / price
+
+    bvps = None
+    pe = None
+    pb = None
+    roe = None
+    if total_shares and total_shares > 0:
+        if total_equity:
+            bvps = total_equity / total_shares
+        if market_cap and total_equity and total_equity > 0:
+            pb = market_cap / total_equity
+        if market_cap and ttm_profit and ttm_profit > 0:
+            pe = market_cap / ttm_profit
+    if total_equity and total_equity > 0 and ttm_profit and ttm_profit > 0:
+        roe = (ttm_profit / total_equity) * 100
+
+    return {
+        "symbol": symbol,
+        "name": _to_python(hq_obj.get("name")) or symbol,
+        "market": market.lower(),
+        "industry": None,
+        "pe": round(pe, 2) if pe else None,
+        "pb": round(pb, 2) if pb else None,
+        "eps": round(eps, 4) if eps else None,
+        "bvps": round(bvps, 2) if bvps else None,
+        "roe": round(roe, 2) if roe else None,
+        "revenue": revenue,
+        "profit": profit,
+        "dividend": None,
+        "total_capital": total_shares,
+        "circulating_capital": None,
+        "market_cap": market_cap,
+        "circulating_market_cap": None,
+        "turnover_rate": _to_float(hq_obj.get("hsl")),
+        "amplitude": _to_float(hq_obj.get("amplitude")),
+        "volume_ratio": _to_float(hq_obj.get("lb")),
+        "fiv_min_rise": None,
+    }
 
 
 def _fetch_f10_from_akshare(symbol: str) -> Optional[dict]:
@@ -1037,7 +1197,27 @@ async def _get_f10(symbol: str) -> dict:
     except Exception:
         pass
 
-    # 降级 1：akshare 估值/行业数据
+    # 降级 1：国信财务 skill（本地网络不可用时仍可工作）
+    try:
+        guosen_data = _fetch_f10_from_guosen(symbol)
+        if guosen_data:
+            if not guosen_data.get("name") or guosen_data["name"] == symbol:
+                try:
+                    q = provider.get_stock_quote(symbol)
+                    if q and q.name:
+                        guosen_data["name"] = q.name
+                except Exception:
+                    pass
+            normalized = _normalize_f10_data(guosen_data, symbol)
+            return {
+                "symbol": symbol,
+                "source": "guosen",
+                "data": normalized,
+            }
+    except Exception:
+        pass
+
+    # 降级 2：akshare 估值/行业数据
     try:
         akshare_data = _fetch_f10_from_akshare(symbol)
         if akshare_data:
@@ -1057,7 +1237,7 @@ async def _get_f10(symbol: str) -> dict:
     except Exception:
         pass
 
-    # 降级 2：从股票列表获取基本信息
+    # 降级 3：从股票列表获取基本信息
     try:
         stock_list = provider.fetch_stock_list()
         name = None
@@ -1307,13 +1487,26 @@ async def get_market_overview():
         except ValueError:
             latest_trading_day = None
 
+    data_fresh = True
+    stale_days = 0
+    if latest_trading_day:
+        try:
+            stale_days = (datetime.now().date() - pd.to_datetime(latest_trading_day).date()).days
+            data_fresh = stale_days <= 2
+        except Exception:
+            pass
+
     result = {
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
         "latest_trading_day": latest_trading_day,
+        "data_fresh": data_fresh,
+        "stale_days": stale_days,
         "indices": results,
         "sentiment": sentiment,
     }
+    if not data_fresh:
+        result["note"] = f"本地行情数据最新日期为 {latest_trading_day}，距今 {stale_days} 天，请检查通达信数据是否已更新"
 
     _market_overview_cache = result
     _market_overview_cache_time = datetime.now()

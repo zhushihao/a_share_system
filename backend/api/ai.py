@@ -269,7 +269,7 @@ async def ai_chat(request: AIChatRequest):
         latency = int((time.time() - start) * 1000)
         return AIChatResponse(
             reply=reply,
-            context_injected=None,
+            context_injected=request.context_data,
             tokens_used=0,
             model=None,
             latency_ms=latency,
@@ -303,8 +303,8 @@ async def ai_templates(category: Optional[str] = None):
 
 @router.post("/ai/context")
 async def ai_context(
-    symbol: Optional[str] = None,
-    context_type: str = "stock",
+    symbol: Optional[str] = Body(None),
+    context_type: str = Body("stock"),
 ) -> Dict[str, Any]:
     """
     上下文注入接口

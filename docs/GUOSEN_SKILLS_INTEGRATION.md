@@ -1,6 +1,6 @@
 # 国信证券 xxskills 集成优化方案
 
-> 状态：研究阶段  
+> 状态：已实现 market.py 初步接入（sentiment / hotspots / limit-up ladder），待补 quota 恢复后验证
 > 目标：用国信证券 6 个 skill 替代或补充现有 mootdx/akshare 数据源，解决系统排查报告中的数据质量问题。
 
 ---
@@ -11,8 +11,13 @@
 2. 新增 `backend/services/guosen/client.py` 统一客户端：
    - 自动区分 `GS_API_KEY` / `COZE_GUOSEN_API_KEY_7627056463827140634`
    - 封装行情、财务、宏观经济、智能选股、基金对比、ETF 筛选调用
-   - 已提交到 `main`。
-3. 已确认 `query_single_hq` 可连通（网络偶有波动）。
+   - query 方法支持 `timeout` / `max_retries` 参数，便于上层按场景调整
+3. 已确认 `query_single_hq` / `query_multi_hq` / `query_related_comb_hq` 可连通。
+4. `backend/api/market.py` 已接入国信作为首层/补充数据源：
+   - `_fetch_market_sentiment()`：国信提供涨跌停家数，mootdx/eastmoney 仍提供涨跌家数
+   - `_fetch_hotspots_real()`：通过领涨股 `query_related_comb_hq` 聚合热点板块
+   - `_fetch_limit_up_ladder()`：优先从国信涨幅榜过滤涨停股
+5. 接入过程中发现 **国信 API 日限额已用完**（`197006 超过日限额`），当前无法获取真实数据，待次日配额恢复或更换 key 后验证。
 
 ---
 
@@ -45,12 +50,12 @@
 
 ### 3.2 backend/api/market.py
 
-| 优先级 | 函数 | 改动 | skill |
-|---|---|---|---|
-| P0 | `_fetch_market_sentiment()` | 用 `query_multi_hq` 涨跌排名计算涨跌家数，替代 eastmoney | market |
-| P0 | `_fetch_hotspots_real()` | 用 `query_multi_hq` 行业/概念排名 + `query_related_comb_hq` 成分股 | market |
-| P0 | `_get_sector_component_count()` | 用 `query_related_comb_hq` 获取真实成分股列表 | market |
-| P1 | `_fetch_limit_up_ladder()` | 用 `query_multi_hq` 涨停排名 | market |
+| 优先级 | 函数 | 改动 | skill | 状态 |
+|---|---|---|---|---|
+| P0 | `_fetch_market_sentiment()` | 国信 `query_multi_hq` 补充涨跌停家数；涨跌家数仍由 mootdx/eastmoney 提供 | market | 已接入，待 quota 恢复验证 |
+| P0 | `_fetch_hotspots_real()` | 国信 `query_multi_hq` 领涨股 + `query_related_comb_hq` 关联板块聚合热点 | market | 已接入，待 quota 恢复验证 |
+| P0 | `_get_sector_component_count()` | 国信 skill 暂无板块成分股接口，仍用 eastmoney/akshare/本地 fallback | market | 阻塞，待国信提供接口 |
+| P1 | `_fetch_limit_up_ladder()` | 国信 `query_multi_hq` 涨幅榜过滤涨停股 | market | 已接入，待 quota 恢复验证 |
 
 ### 3.3 backend/api/quote.py
 
@@ -121,7 +126,9 @@ export COZE_GUOSEN_API_KEY_7627056463827140634="V2V-..."
 
 ## 七、风险与注意事项
 
-- **网络稳定性**：Guosen API 偶发 `curl failed`，生产环境需加指数退避重试。
+- **日调用限额**：国信 API 存在日限额（错误码 `197006 超过日限额`），超限时需等待次日或更换 key；生产环境建议增加限额监控与降级开关。
+- **网络稳定性**：Guosen API 偶发 `curl failed`，生产环境需加指数退避重试（已在 client 层实现）。
 - **调用频次限制**：实时行情单次最多 10 只，多股需分批。
 - **市场代码映射**：深圳=0、上海=1、北交所=2，需根据代码前缀自动推断。
+- **板块成分股缺失**：当前 6 个 skill 均不提供板块成分股/行业排名接口，`sectors` 相关指标仍需依赖 eastmoney/akshare。
 - **合规声明**：返回数据仅供展示，不做投资建议。

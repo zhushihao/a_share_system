@@ -842,21 +842,39 @@ class MootdxDataProvider:
         # 可观测性
         self._obs = get_obs()
         
-        # 统计
+        # 统计（按日自动重置，避免进程长期运行后 failures 累积造成误判）
         self._stats = {"offline_hits": 0, "realtime_hits": 0, "cache_hits": 0, "failures": 0}
-    
+        self._stats_date = datetime.now().date()
+
+    def _maybe_reset_stats(self) -> None:
+        """跨天时自动重置统计计数器"""
+        today = datetime.now().date()
+        if today != self._stats_date:
+            self._stats = {"offline_hits": 0, "realtime_hits": 0, "cache_hits": 0, "failures": 0}
+            self._stats_date = today
+            self._obs.log("INFO", "MootdxDataProvider stats reset for new day", "MootdxDataProvider")
+
+    def reset_stats(self) -> Dict[str, Any]:
+        """手动重置统计计数器"""
+        self._stats = {"offline_hits": 0, "realtime_hits": 0, "cache_hits": 0, "failures": 0}
+        self._stats_date = datetime.now().date()
+        self._obs.log("INFO", "MootdxDataProvider stats reset manually", "MootdxDataProvider")
+        return self._stats.copy()
+
     # ────────────────────────────────────────────────────────
     # 状态检查
     # ────────────────────────────────────────────────────────
-    
+
     def health_check(self) -> Dict[str, Any]:
         """健康检查"""
+        self._maybe_reset_stats()
         return {
             "offline_available": self._offline.is_available(),
             "realtime_available": self._realtime.is_available(),
             "tdxdir_exists": os.path.exists(self.tdxdir),
             "mootdx_installed": MOOTDX_AVAILABLE,
             "stats": self._stats.copy(),
+            "stats_date": self._stats_date.isoformat(),
         }
     
     # ────────────────────────────────────────────────────────

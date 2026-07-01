@@ -14,6 +14,7 @@ Market API - 行情看板接口
 """
 
 import sys, os
+import re
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
@@ -22,6 +23,11 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
 from backend.core.observability import get_obs
+
+try:
+    from backend.services.guosen.client import GuosenClient, GuosenSkillError
+except ImportError:
+    from services.guosen.client import GuosenClient, GuosenSkillError
 
 router = APIRouter()
 
@@ -50,6 +56,9 @@ _sector_network_available: Optional[bool] = None
 _sector_network_probe_time: Optional[datetime] = None
 _SECTOR_NETWORK_PROBE_TTL = 60
 
+# 国信 skill 客户端（延迟初始化）
+_guosen_client: Optional[GuosenClient] = None
+
 # 四大指数代码
 INDEX_CODES = {
     "sh000001": "上证指数",
@@ -75,6 +84,65 @@ _DEFAULT_SECTOR_COUNTS = {
     "BK0525": 50, "BK0526": 40, "BK0527": 30, "BK0528": 80,
     "BK0529": 35, "BK0530": 60, "BK0531": 90, "BK0532": 95,
 }
+
+# 预定义板块近似成分股数量（网络不可用时兜底，数值为经验近似，仅作展示参考）
+_APPROX_SECTOR_COUNTS = {
+    # 申万一级（按常见规模估算）
+    "sw801120": 130, "食品饮料": 130,
+    "sw801110": 90, "家用电器": 90,
+    "sw801150": 470, "医药生物": 470,
+    "sw801080": 450, "电子": 450,
+    "sw801750": 330, "计算机": 330,
+    "sw801770": 130, "通信": 130,
+    "sw801880": 260, "汽车": 260,
+    "sw801030": 370, "化工": 370,
+    "sw801730": 360, "电力设备": 360,
+    "sw801890": 530, "机械设备": 530,
+    "sw801710": 90, "建筑材料": 90,
+    "sw801720": 170, "建筑装饰": 170,
+    "sw801170": 110, "纺织服装": 110,
+    "sw801010": 110, "农林牧渔": 110,
+    "sw801790": 80, "非银金融": 80,
+    "sw801780": 40, "银行": 40,
+    "sw801210": 100, "社会服务": 100,
+    "sw801140": 140, "轻工制造": 140,
+    "sw801200": 160, "商贸零售": 160,
+    "sw801130": 90, "纺织服饰": 90,
+    "sw801160": 170, "公用事业": 170,
+    "sw801050": 130, "有色金属": 130,
+    "sw801040": 40, "钢铁": 40,
+    "sw801950": 40, "煤炭": 40,
+    "sw801960": 50, "石油石化": 50,
+    "sw801970": 120, "环保": 120,
+    "sw801980": 30, "美容护理": 30,
+    "sw801990": 40, "综合": 40,
+    # 热门概念
+    "gn-ai": 200, "人工智能": 200,
+    "gn-xny": 250, "新能源": 250,
+    "gn-bdt": 200, "半导体": 200,
+    "gn-xfc": 200, "新能车": 200,
+    "gn-yy": 150, "创新药": 150,
+    "gn-jg": 150, "军工": 150,
+    "gn-zgb": 100, "中特估": 100,
+    "gn-dc": 110, "房地产": 110,
+}
+
+
+def _approx_sector_count(code: str, name: str = "") -> int:
+    """获取板块近似成分股数量（网络完全不可用时兜底）"""
+    if code:
+        count = _APPROX_SECTOR_COUNTS.get(code)
+        if count:
+            return count
+        # 兼容纯数字申万代码（如 801120）
+        count = _APPROX_SECTOR_COUNTS.get(f"sw{code}")
+        if count:
+            return count
+    if name:
+        count = _APPROX_SECTOR_COUNTS.get(name)
+        if count:
+            return count
+    return 0
 
 
 # ───────────────────────────────────────────────
@@ -102,6 +170,113 @@ def _get_latest_trading_day() -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def _sanitize_msg(text: str) -> str:
+    """清除日志/异常中的 API Key 等敏感信息"""
+    if not text:
+        return text
+    text = re.sub(r"apiKey=[^\s&\"']+", "apiKey=***", text, flags=re.IGNORECASE)
+    text = re.sub(r"V2V-[A-Za-z0-9_-]{50,}", "V2V-***", text)
+    return text
+
+
+def _get_guosen_client() -> Optional[GuosenClient]:
+    """延迟初始化国信客户端；未配置 key 或缺少 skill 时返回 None"""
+    global _guosen_client
+    if _guosen_client is not None:
+        return _guosen_client
+    if not os.environ.get("GS_API_KEY"):
+        return None
+    try:
+        _guosen_client = GuosenClient()
+        return _guosen_client
+    except Exception as e:
+        get_obs().log("WARN", f"Guosen client init failed: {_sanitize_msg(str(e))}", "MarketAPI")
+        return None
+
+
+def _parse_pct(value: Any) -> Optional[float]:
+    """将字符串/数字安全转换为浮点百分比"""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _infer_set_code(code: str) -> int:
+    """根据代码前缀推断证券市场代码（0深圳，1上海，2北交所）"""
+    code = str(code)
+    if code.startswith("6"):
+        return 1
+    if code.startswith(("0", "3")):
+        return 0
+    if code.startswith(("4", "8", "9")):
+        return 2
+    return 0
+
+
+def _extract_data_list(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """提取国信接口返回中的 data 列表（兼容 result 为 dict 或 list 的错误响应）"""
+    if not resp or not isinstance(resp, dict):
+        return []
+    result = resp.get("result")
+    if isinstance(result, list) and result:
+        result = result[0]
+    if not isinstance(result, dict) or result.get("code") != 0:
+        return []
+    data = resp.get("data")
+    return data if isinstance(data, list) else []
+
+
+def _is_limit_up(item: Dict[str, Any]) -> bool:
+    """根据涨跌幅判断是否为涨停（区分 10%/20%/30% 板块）"""
+    pct = _parse_pct(item.get("priceChangePct"))
+    if pct is None:
+        return False
+    code = str(item.get("code", ""))
+    if code.startswith(("30", "68")):
+        return pct >= 19.85
+    if code.startswith(("4", "8", "9")):
+        return pct >= 29.0
+    return pct >= 9.85
+
+
+def _is_limit_down(item: Dict[str, Any]) -> bool:
+    """根据涨跌幅判断是否为跌停"""
+    pct = _parse_pct(item.get("priceChangePct"))
+    if pct is None:
+        return False
+    code = str(item.get("code", ""))
+    if code.startswith(("30", "68")):
+        return pct <= -19.85
+    if code.startswith(("4", "8", "9")):
+        return pct <= -29.0
+    return pct <= -9.85
+
+
+def _fetch_guosen_sentiment() -> Dict[str, Any]:
+    """
+    通过国信 query_multi_hq 获取涨跌停家数。
+    由于接口只返回前 N 名，涨跌家数仍依赖 mootdx/eastmoney。
+    """
+    client = _get_guosen_client()
+    if not client:
+        return {}
+    try:
+        gainers = client.query_multi_hq(set_domain=6, want_num=80, sort_type=1)
+        decliners = client.query_multi_hq(set_domain=6, want_num=80, sort_type=2)
+        up_list = _extract_data_list(gainers)
+        down_list = _extract_data_list(decliners)
+        return {
+            "limit_up": sum(1 for i in up_list if _is_limit_up(i)),
+            "limit_down": sum(1 for i in down_list if _is_limit_down(i)),
+        }
+    except Exception as e:
+        get_obs().log("WARN", f"Guosen sentiment failed: {_sanitize_msg(str(e))}", "MarketAPI")
+        return {}
 
 
 def _fetch_index_quotes() -> List[Dict[str, Any]]:
@@ -139,6 +314,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
     """
     获取市场情绪数据（5分钟缓存）
     数据来源：优先 mootdx Quotes 实时接口，失败时降级到东方财富全市场快照 + 涨跌停统计。
+    国信 skill 作为并行补充，用于在 mootdx/eastmoney 不可用时提供涨跌停家数。
     """
     global _sentiment_cache, _sentiment_cache_time
     now = datetime.now()
@@ -147,6 +323,14 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
             return _sentiment_cache
 
     data_date = _get_latest_trading_day()
+    guosen_extra = _fetch_guosen_sentiment()
+
+    def _merge_guosen(target: Dict[str, Any]) -> None:
+        """当主数据源未返回涨跌停家数时，用国信数据补全"""
+        if target.get("limit_up") in (None, 0) and guosen_extra.get("limit_up"):
+            target["limit_up"] = guosen_extra["limit_up"]
+        if target.get("limit_down") in (None, 0) and guosen_extra.get("limit_down"):
+            target["limit_down"] = guosen_extra["limit_down"]
 
     # 1. 优先 mootdx 全市场概览
     try:
@@ -162,6 +346,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
                 "data_date": data_date,
                 "source": "mootdx",
             }
+            _merge_guosen(result)
             _sentiment_cache = result
             _sentiment_cache_time = now
             return result
@@ -197,6 +382,7 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
             "data_date": data_date,
             "source": "eastmoney",
         }
+        _merge_guosen(result)
         _sentiment_cache = result
         _sentiment_cache_time = now
         return result
@@ -208,16 +394,17 @@ def _fetch_market_sentiment() -> Dict[str, Any]:
         cached = dict(_sentiment_cache)
         cached["source"] = "cache"
         cached["data_date"] = data_date
+        _merge_guosen(cached)
         return cached
 
     result = {
         "up_down_ratio": None,
-        "limit_up": None,
-        "limit_down": None,
+        "limit_up": guosen_extra.get("limit_up"),
+        "limit_down": guosen_extra.get("limit_down"),
         "advancing": None,
         "declining": None,
         "data_date": data_date,
-        "source": "unavailable",
+        "source": "guosen" if guosen_extra else "unavailable",
     }
     _sentiment_cache = result
     _sentiment_cache_time = now
@@ -244,11 +431,100 @@ def _default_hotspots() -> List[Dict[str, Any]]:
     ]
 
 
+def _guosen_related_boards(stock_item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """查询单只股票的关联板块（供热点聚合使用）"""
+    client = _get_guosen_client()
+    if not client:
+        return []
+    code = str(stock_item.get("code", ""))
+    if not code:
+        return []
+    set_code = _infer_set_code(code)
+    try:
+        resp = client.query_related_comb_hq(code, set_code, max_retries=1, timeout=10)
+        return _extract_data_list(resp)
+    except Exception as e:
+        get_obs().log("WARN", f"Guosen related_comb {code} failed: {_sanitize_msg(str(e))}", "MarketAPI")
+        return []
+
+
+def _fetch_guosen_hotspots() -> Optional[List[Dict[str, Any]]]:
+    """
+    通过国信涨幅榜 + 个股关联板块聚合热点板块 TOP10。
+    不返回兜底，失败时返回 None 让上层继续走 eastmoney/mootdx fallback。
+    """
+    client = _get_guosen_client()
+    if not client:
+        return None
+    try:
+        resp = client.query_multi_hq(set_domain=6, want_num=20, sort_type=1, max_retries=2, timeout=15)
+        gainers = _extract_data_list(resp)[:5]
+        if not gainers:
+            return None
+
+        boards_map: Dict[str, Dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=5, thread_name_prefix="guosen_hotspot") as ex:
+            futures = {ex.submit(_guosen_related_boards, s): s for s in gainers}
+            for fut in futures:
+                try:
+                    boards = fut.result(timeout=10)
+                except Exception:
+                    boards = []
+                for b in boards:
+                    bcode = str(b.get("code", ""))
+                    if not bcode:
+                        continue
+                    existing = boards_map.get(bcode)
+                    if existing is None:
+                        boards_map[bcode] = b
+                    else:
+                        cur = abs(_parse_pct(b.get("priceChangePct")) or 0)
+                        old = abs(_parse_pct(existing.get("priceChangePct")) or 0)
+                        if cur > old:
+                            boards_map[bcode] = b
+
+        if not boards_map:
+            return None
+
+        sorted_boards = sorted(
+            boards_map.values(),
+            key=lambda x: _parse_pct(x.get("priceChangePct")) or -9999,
+            reverse=True,
+        )[:10]
+        codes = [b.get("code") for b in sorted_boards]
+        count_map = _get_sector_component_counts(codes)
+        result = []
+        for i, b in enumerate(sorted_boards):
+            result.append({
+                "block_code": b.get("code", ""),
+                "block_name": b.get("name", ""),
+                "change_pct": round(_parse_pct(b.get("priceChangePct")) or 0, 2),
+                "volume_ratio": None,
+                "money_flow": 0.0,
+                "rank": i + 1,
+                "stock_count": count_map.get(b.get("code"), 0),
+                "up_count": 0,
+                "limit_up_count": 0,
+            })
+        return result if _is_valid_hotspots_result(result) else None
+    except Exception as e:
+        get_obs().log("WARN", f"Guosen hotspots failed: {_sanitize_msg(str(e))}", "MarketAPI")
+        return None
+
+
 def _fetch_hotspots_real() -> List[Dict[str, Any]]:
     """尝试获取真实热点数据（网络 + mootdx），不返回兜底"""
     now = datetime.now()
 
-    # 1. 优先东方财富真实板块涨幅榜
+    # 1. 优先国信：通过领涨股关联板块聚合热点
+    try:
+        guosen_hotspots = _fetch_guosen_hotspots()
+        if guosen_hotspots:
+            return guosen_hotspots
+    except Exception as e:
+        get_obs().log("WARN", f"Guosen hotspots path failed: {_sanitize_msg(str(e))}", "MarketAPI")
+
+    # 2. 东方财富真实板块涨幅榜
     try:
         network_sectors = _fetch_sector_list_from_network()
         if network_sectors is not None and len(network_sectors) > 0:
@@ -281,7 +557,7 @@ def _fetch_hotspots_real() -> List[Dict[str, Any]]:
     except Exception as e:
         get_obs().log("WARN", f"eastmoney hotspots failed: {type(e).__name__}", "MarketAPI")
 
-    # 2. 降级：mootdx 交易所层面数据（带 1.5 秒超时）
+    # 3. 降级：mootdx 交易所层面数据（带 1.5 秒超时）
     try:
         platform = _get_data_platform()
         future = _sector_count_executor.submit(platform.get_hotspots)
@@ -344,13 +620,41 @@ def _fetch_hotspots() -> List[Dict[str, Any]]:
 def _fetch_limit_up_ladder() -> List[Dict[str, Any]]:
     """
     获取涨停梯队
-    
-    尝试东方财富接口，失败时降级为空列表（不返回 mock 数据）。
+
+    优先使用国信 query_multi_hq 涨幅榜，失败时降级到东方财富接口，
+    最后返回空列表（不返回 mock 数据）。
     """
+    # 1. 国信：从沪深A股涨幅榜过滤涨停股
+    client = _get_guosen_client()
+    if client:
+        try:
+            resp = client.query_multi_hq(set_domain=6, want_num=80, sort_type=1)
+            gainers = _extract_data_list(resp)
+            ladder = [
+                {
+                    "code": item.get("code", ""),
+                    "name": item.get("name", ""),
+                    "close": _parse_pct(item.get("now")) or 0,
+                    "board_amount": 0.0,
+                    "board_ratio": round(_parse_pct(item.get("priceChangePct")) or 0, 2),
+                    "open_times": 0,
+                    "first_time": "",
+                    "last_time": "",
+                    "consecutive_days": 1,
+                }
+                for item in gainers
+                if _is_limit_up(item)
+            ]
+            if ladder:
+                return ladder[:20]
+        except Exception as e:
+            get_obs().log("WARN", f"Guosen limit-up ladder failed: {_sanitize_msg(str(e))}", "MarketAPI")
+
+    # 2. 降级：东方财富接口
     try:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from utils.data_fetcher import fetch_limit_up_down
-        
+
         date_str = datetime.now().strftime("%Y-%m-%d")
         df = fetch_limit_up_down(date_str)
         if df is not None and len(df) > 0:
@@ -372,8 +676,8 @@ def _fetch_limit_up_ladder() -> List[Dict[str, Any]]:
             ]
     except Exception:
         pass
-    
-    # 降级：不返回 mock 数据，返回空列表
+
+    # 3. 不返回 mock 数据
     return []
 
 
@@ -720,6 +1024,40 @@ def _read_local_blocks() -> Dict[str, List[str]]:
     return blocks
 
 
+# akshare 板块成分股数量缓存
+_akshare_sector_count_cache: Dict[str, Any] = {}
+_AKSHARE_SECTOR_COUNT_TTL = 3600
+
+
+def _akshare_sector_count(sector_name: str, sector_type: str) -> int:
+    """通过 akshare 获取板块成分股数量（带 1 小时缓存）"""
+    cache_key = f"{sector_type}:{sector_name}"
+    now = datetime.now()
+    cached = _akshare_sector_count_cache.get(cache_key)
+    if cached and (now - cached[1]).total_seconds() < _AKSHARE_SECTOR_COUNT_TTL:
+        return cached[0]
+    try:
+        import akshare as ak
+        if sector_type == "industry":
+            df = ak.stock_board_industry_cons_em(symbol=sector_name)
+        else:
+            df = ak.stock_board_concept_cons_em(symbol=sector_name)
+        count = len(df) if df is not None and not df.empty else 0
+    except Exception:
+        count = 0
+    _akshare_sector_count_cache[cache_key] = (count, now)
+    return count
+
+
+def _get_sector_component_count_akshare(sector_name: str, sector_type: str, timeout: float = 3.0) -> int:
+    """带超时的 akshare 板块成分股数量查询"""
+    try:
+        future = _sector_count_executor.submit(_akshare_sector_count, sector_name, sector_type)
+        return future.result(timeout=timeout)
+    except Exception:
+        return 0
+
+
 @router.get("/market/sectors")
 async def market_sectors(
     type_filter: Optional[str] = Query(None, enum=["industry", "concept"], description="筛选类型"),
@@ -737,14 +1075,20 @@ async def market_sectors(
         sectors = []
         for _, row in network_sectors.iterrows():
             code = str(row.get("sector_code", ""))
+            name = str(row.get("sector_name", ""))
+            stock_count = count_map.get(code, 0)
+            data_quality = "real" if stock_count > 0 else "approx"
+            if stock_count == 0:
+                stock_count = _approx_sector_count(code, name)
             sectors.append({
                 "code": code,
-                "name": row.get("sector_name", ""),
+                "name": name,
                 "type": "industry",
                 "level": "一级",
                 "change_pct": round(row.get("change_pct", 0), 2),
-                "stock_count": count_map.get(code, 0),
+                "stock_count": stock_count,
                 "stocks": [],
+                "data_quality": data_quality,
             })
         return {
             "count": len(sectors),
@@ -752,7 +1096,7 @@ async def market_sectors(
             "timestamp": datetime.now().isoformat(),
             "source": "eastmoney",
         }
-    
+
     # 2. 降级：预定义列表
     local_blocks = _read_local_blocks()
     sectors = []
@@ -765,13 +1109,22 @@ async def market_sectors(
             if block_name in s["name"] or s["name"] in block_name:
                 stocks = [{"code": c, "name": ""} for c in codes if c]
                 break
+        stock_count = len(stocks)
+        data_quality = "real" if stock_count > 0 else "approx"
+        # 本地未命中时，用 akshare 补成分股数量
+        if stock_count == 0:
+            stock_count = _get_sector_component_count_akshare(s["name"], s["type"])
+        # akshare 也失败时，用近似静态数量兜底
+        if stock_count == 0:
+            stock_count = _approx_sector_count(s["code"], s["name"])
         sectors.append({
             "code": s["code"],
             "name": s["name"],
             "type": s["type"],
             "level": s["level"],
-            "stock_count": len(stocks),
+            "stock_count": stock_count,
             "stocks": stocks[:50],  # 最多返回50只
+            "data_quality": data_quality,
         })
     return {
         "count": len(sectors),

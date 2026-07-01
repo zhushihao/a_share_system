@@ -131,15 +131,31 @@ class GuosenClient:
     # 行情数据
     # ───────────────────────────────────────────────
 
-    def query_single_hq(self, code: str, set_code: int = 0, target: int = 0) -> Dict[str, Any]:
+    def query_single_hq(
+        self,
+        code: str,
+        set_code: int = 0,
+        target: int = 0,
+        timeout: int = 60,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
         """查询单个证券实时行情"""
         return self._run_script(
             "gs-stock-market-query",
             "get_data.py",
             ["single_hq", "--code", code, "--set_code", str(set_code), "--target", str(target)],
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
-    def query_comb_hq(self, codes: List[str], set_codes: List[int], target: int = 0) -> Dict[str, Any]:
+    def query_comb_hq(
+        self,
+        codes: List[str],
+        set_codes: List[int],
+        target: int = 0,
+        timeout: int = 60,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
         """查询多只股票实时行情"""
         if len(codes) != len(set_codes):
             raise GuosenSkillError("codes 与 set_codes 长度必须一致")
@@ -152,17 +168,36 @@ class GuosenClient:
                 "--set_codes", ",".join(str(s) for s in set_codes),
                 "--target", str(target),
             ],
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
-    def query_fund_flow(self, code: str, set_code: int, period: int = 10) -> Dict[str, Any]:
+    def query_fund_flow(
+        self,
+        code: str,
+        set_code: int,
+        period: int = 10,
+        timeout: int = 60,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
         """查询个股资金流向"""
         return self._run_script(
             "gs-stock-market-query",
             "get_data.py",
             ["fund_flow", "--code", code, "--set_code", str(set_code), "--period", str(period)],
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
-    def query_multi_hq(self, set_domain: int, want_num: int = 10, sort_type: int = 1, target: int = 0) -> Dict[str, Any]:
+    def query_multi_hq(
+        self,
+        set_domain: int,
+        want_num: int = 10,
+        sort_type: int = 1,
+        target: int = 0,
+        timeout: int = 60,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
         """查询涨幅/跌幅排名"""
         return self._run_script(
             "gs-stock-market-query",
@@ -174,22 +209,41 @@ class GuosenClient:
                 "--sort_type", str(sort_type),
                 "--target", str(target),
             ],
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
-    def query_related_comb_hq(self, code: str, set_code: int, target: int = 0) -> Dict[str, Any]:
+    def query_related_comb_hq(
+        self,
+        code: str,
+        set_code: int,
+        target: int = 0,
+        timeout: int = 60,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
         """查询个股关联板块"""
         return self._run_script(
             "gs-stock-market-query",
             "get_data.py",
             ["related_comb", "--code", code, "--set_code", str(set_code), "--target", str(target)],
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
-    def query_past_hq(self, code: str, set_code: int, want_nums: int = 20, mas: Optional[str] = None) -> Dict[str, Any]:
+    def query_past_hq(
+        self,
+        code: str,
+        set_code: int,
+        want_nums: int = 20,
+        mas: Optional[str] = None,
+        timeout: int = 60,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
         """查询近 n 个交易日日行情"""
         args = ["past_hq", "--code", code, "--set_code", str(set_code), "--want_nums", str(want_nums)]
         if mas:
             args += ["--mas", mas]
-        return self._run_script("gs-stock-market-query", "get_data.py", args)
+        return self._run_script("gs-stock-market-query", "get_data.py", args, timeout=timeout, max_retries=max_retries)
 
     # ───────────────────────────────────────────────
     # 财务数据
@@ -203,6 +257,8 @@ class GuosenClient:
         report_period: str = "Q0",
         report_year: Optional[str] = None,
         count: int = 1,
+        timeout: int = 60,
+        max_retries: int = 3,
     ) -> Dict[str, Any]:
         """
         查询 A 股财务报表。
@@ -217,7 +273,7 @@ class GuosenClient:
         ]
         if report_year:
             args += ["--report_year", report_year]
-        return self._run_script("gs-stock-financial-query", "get_data.py", args)
+        return self._run_script("gs-stock-financial-query", "get_data.py", args, timeout=timeout, max_retries=max_retries)
 
     # ───────────────────────────────────────────────
     # 宏观经济

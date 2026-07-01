@@ -147,6 +147,7 @@ class AIChatRequest(BaseModel):
     symbol: Optional[str] = None
     history: List[Dict] = []
     stream: bool = False
+    context_data: Optional[Dict] = None
 
 
 class AIChatResponse(BaseModel):

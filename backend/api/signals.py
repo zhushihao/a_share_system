@@ -497,7 +497,7 @@ async def scan_watchlist_signals(
 
 
 @router.post("/signals/{signal_id}/track")
-async def track_signal(signal_id: str, current_price: float = Query(..., description="当前价格")):
+async def track_signal(signal_id: str, current_price: float = Body(..., description="当前价格")):
     """
     追踪信号绩效
 
@@ -538,8 +538,8 @@ async def signal_performance(
 @router.post("/signals/{signal_id}/close")
 async def close_signal(
     signal_id: str,
-    status: str = Query(..., enum=["hit_target", "hit_stop", "expired", "manual"]),
-    exit_price: float = Query(..., description="退出价格"),
+    status: str = Body(..., enum=["hit_target", "hit_stop", "expired", "manual"]),
+    exit_price: float = Body(..., description="退出价格"),
 ):
     """
     手动关闭信号
